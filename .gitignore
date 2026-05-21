@@ -67,3 +67,15 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+
+data
+notes
+output
+plots
+.sarathi
+project.json
+plan.md
+CLAUDE.md
+
+emsdk/
