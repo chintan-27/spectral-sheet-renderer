@@ -12,14 +12,54 @@ out vec3 vTangent;
 out vec3 vBitangent;
 out vec3 vGrooveDir;
 
+float hash21(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+float valueNoise(vec2 p) {
+    vec2 cell = floor(p);
+    vec2 local = fract(p);
+    vec2 blend = local * local * (3.0 - 2.0 * local);
+
+    float a = hash21(cell);
+    float b = hash21(cell + vec2(1.0, 0.0));
+    float c = hash21(cell + vec2(0.0, 1.0));
+    float d = hash21(cell + vec2(1.0, 1.0));
+
+    return mix(mix(a, b, blend.x), mix(c, d, blend.x), blend.y);
+}
+
+float fbm(vec2 p) {
+    float total = 0.0;
+    float amplitude = 0.5;
+
+    for (int i = 0; i < 4; ++i) {
+        total += valueNoise(p) * amplitude;
+        p = p * 2.03 + vec2(17.7, 9.2);
+        amplitude *= 0.5;
+    }
+
+    return total;
+}
+
+float sheetHeight(vec2 p) {
+    float primaryWave = sin(p.x * 5.4 + uTime * 1.05) * 0.065;
+    float crossWave = sin((p.x * 0.65 + p.y) * 4.2 - uTime * 0.72) * 0.040;
+    float broadFolds = (fbm(p * 1.35 + vec2(uTime * 0.035, -uTime * 0.020)) - 0.5) * 0.110;
+    float fineWrinkles = (fbm(p * 8.0 + vec2(uTime * 0.10, uTime * 0.06)) - 0.5) * 0.022;
+
+    return primaryWave + crossWave + broadFolds + fineWrinkles;
+}
+
 void main() {
-    float primaryWave = sin(aPos.x * 6.0 + uTime * 1.4);
-    float crossWave = sin((aPos.x + aPos.z) * 4.0 - uTime * 0.9);
-    float height = primaryWave * 0.09 + crossWave * 0.04;
-    float primarySlopeX = cos(aPos.x * 6.0 + uTime * 1.4) * 6.0 * 0.09;
-    float crossSlope = cos((aPos.x + aPos.z) * 4.0 - uTime * 0.9) * 4.0 * 0.04;
-    float dHeightDx = primarySlopeX + crossSlope;
-    float dHeightDz = crossSlope;
+    float height = sheetHeight(aPos.xz);
+    float sampleStep = 0.025;
+    float heightLeft = sheetHeight(aPos.xz - vec2(sampleStep, 0.0));
+    float heightRight = sheetHeight(aPos.xz + vec2(sampleStep, 0.0));
+    float heightBack = sheetHeight(aPos.xz - vec2(0.0, sampleStep));
+    float heightForward = sheetHeight(aPos.xz + vec2(0.0, sampleStep));
+    float dHeightDx = (heightRight - heightLeft) / (sampleStep * 2.0);
+    float dHeightDz = (heightForward - heightBack) / (sampleStep * 2.0);
 
     vec3 tangent = normalize(vec3(1.0, dHeightDx, 0.0));
     vec3 bitangent = normalize(vec3(0.0, dHeightDz, 1.0));
