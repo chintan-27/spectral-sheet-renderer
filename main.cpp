@@ -6,12 +6,64 @@
 #include <emscripten/emscripten.h>
 #include <emscripten/html5.h>
 
+#include "environment.h"
 #include "gpu.h"
 #include "light.h"
 #include "material.h"
 #include "math3d.h"
 #include "shaders.h"
 #include "sheet_mesh.h"
+
+EM_JS(void, updateOverlay, (
+    const char* materialNamePtr,
+    int debugView,
+    float roughness,
+    float reflectivity,
+    float grooveSpacingNm,
+    float grooveDepthNm,
+    float layerThicknessNm,
+    float disorderStrength,
+    int spectralIndex,
+    float spectralWavelengthNm
+), {
+    const overlay = document.getElementById('debug-overlay');
+    if (!overlay) {
+        return;
+    }
+
+    const materialName = UTF8ToString(materialNamePtr);
+    const debugNames = [
+        'Shaded render',
+        'Groove spacing',
+        'Groove depth',
+        'Layer thickness',
+        'Disorder / roughness',
+        'Wave height',
+        'Normals + groove bands',
+        'Environment reflection',
+        'Reflection direction',
+        'Spectral material color',
+        'Optical n/k summary',
+        'Single wavelength'
+    ];
+    const debugName = debugNames[debugView] || 'Unknown';
+
+    overlay.innerHTML =
+        '<div class="title">Material Debug</div>' +
+        '<div>Material: ' + materialName + '</div>' +
+        '<div>View: ' + debugName + '</div>' +
+        '<br>' +
+        '<div>Roughness: ' + roughness.toFixed(3) + '</div>' +
+        '<div>Reflectivity: ' + reflectivity.toFixed(3) + '</div>' +
+        '<div>Groove spacing: ' + grooveSpacingNm.toFixed(1) + ' nm</div>' +
+        '<div>Groove depth: ' + grooveDepthNm.toFixed(1) + ' nm</div>' +
+        '<div>Layer thickness: ' + layerThicknessNm.toFixed(1) + ' nm</div>' +
+        '<div>Disorder: ' + disorderStrength.toFixed(3) + '</div>' +
+        '<div>Spectral sample: #' + spectralIndex + ' / ' + spectralWavelengthNm.toFixed(1) + ' nm</div>' +
+        '<br>' +
+        '<div class="muted">Materials: 1 Al, 2 plastic, 3 coated, 4 Cu, 5 Au, 6 Ag</div>' +
+        '<div class="muted">Views: 0 shaded, 7 spacing, 8 depth, 9 layer, Q disorder, W height, E normals, R env, T reflection, Y spectral, U n/k, I wavelength</div>';
+});
 
 GLuint gProgram = 0;
 GpuMesh gSheetMesh = {};
@@ -24,6 +76,16 @@ GLint gMaterialRoughnessUniform = -1;
 GLint gMaterialSpecularStrengthUniform = -1;
 GLint gMaterialReflectivityUniform = -1;
 GLint gMaterialStructureUniform = -1;
+GLint gSpectralWavelengthsUniform = -1;
+GLint gOpticalEtaUniform = -1;
+GLint gOpticalExtinctionUniform = -1;
+GLint gEnvironmentLowColorUniform = -1;
+GLint gEnvironmentHighColorUniform = -1;
+GLint gEnvironmentHorizonColorUniform = -1;
+GLint gEnvironmentSoftboxColorUniform = -1;
+GLint gEnvironmentControlsUniform = -1;
+GLint gDebugViewUniform = -1;
+GLint gSpectralDebugIndexUniform = -1;
 
 int gCanvasWidth = 800;
 int gCanvasHeight = 600;
@@ -36,14 +98,86 @@ float gCameraPitch = 0.55f;
 float gCameraDistance = 3.4f;
 DirectionalLight gLight = createDefaultDirectionalLight();
 Material gMaterial = createDefaultMetalMaterial();
+Environment gEnvironment = createDefaultEnvironment();
+int gDebugView = 0;
+int gSpectralDebugIndex = 0;
 
 const float kPi = 3.14159265358979323846f;
+
+void refreshOverlay() {
+    updateOverlay(
+        materialName(gMaterial.type),
+        gDebugView,
+        gMaterial.roughness,
+        gMaterial.reflectivity,
+        gMaterial.structure.grooveSpacingNm,
+        gMaterial.structure.grooveDepthNm,
+        gMaterial.structure.layerThicknessNm,
+        gMaterial.structure.disorderStrength,
+        gSpectralDebugIndex,
+        gMaterial.optical.wavelengthsNm[gSpectralDebugIndex]
+    );
+}
 
 void initSheetMesh() {
     std::vector<float> vertices;
     std::vector<unsigned int> indices;
     generateSheetMesh(48, 48, 2.0f, 2.0f, vertices, indices);
     gSheetMesh = uploadIndexedPositionMesh(vertices, indices);
+}
+
+void setMaterial(MaterialType type) {
+    gMaterial = createMaterial(type);
+    const char* name = materialName(type);
+
+    if (type == MaterialType::AluminumFoil) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Aluminum Foil';");
+    } else if (type == MaterialType::CoatedPlastic) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Coated Plastic';");
+    } else if (type == MaterialType::CoatedMetal) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Coated Metal';");
+    } else if (type == MaterialType::Copper) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Copper';");
+    } else if (type == MaterialType::Gold) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Gold';");
+    } else if (type == MaterialType::Silver) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Silver';");
+    }
+
+    (void)name;
+    refreshOverlay();
+}
+
+void setDebugView(int debugView) {
+    gDebugView = debugView;
+
+    if (debugView == 0) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Shaded';");
+    } else if (debugView == 1) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Debug Groove Spacing';");
+    } else if (debugView == 2) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Debug Groove Depth';");
+    } else if (debugView == 3) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Debug Layer Thickness';");
+    } else if (debugView == 4) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Debug Disorder Roughness';");
+    } else if (debugView == 5) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Debug Height';");
+    } else if (debugView == 6) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Debug Normals Grooves';");
+    } else if (debugView == 7) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Debug Environment Reflection';");
+    } else if (debugView == 8) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Debug Reflection Direction';");
+    } else if (debugView == 9) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Debug Spectral Color';");
+    } else if (debugView == 10) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Debug Optical Constants';");
+    } else if (debugView == 11) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Debug Single Wavelength';");
+    }
+
+    refreshOverlay();
 }
 
 void updateCanvasSize() {
@@ -74,6 +208,7 @@ Vec3 cameraPosition() {
 
 EM_BOOL onMouseDown(int, const EmscriptenMouseEvent* event, void*) {
     if (event->button == 0) {
+        emscripten_run_script("Module.canvas.focus();");
         gDragging = true;
         gLastMouseX = event->clientX;
         gLastMouseY = event->clientY;
@@ -109,6 +244,103 @@ EM_BOOL onWheel(int, const EmscriptenWheelEvent* event, void*) {
     return EM_TRUE;
 }
 
+EM_BOOL onKeyDown(int, const EmscriptenKeyboardEvent* event, void*) {
+    const char key = event->key[0];
+
+    if (event->keyCode == 49 || key == '1') {
+        setMaterial(MaterialType::AluminumFoil);
+        return EM_TRUE;
+    }
+
+    if (event->keyCode == 50 || key == '2') {
+        setMaterial(MaterialType::CoatedPlastic);
+        return EM_TRUE;
+    }
+
+    if (event->keyCode == 51 || key == '3') {
+        setMaterial(MaterialType::CoatedMetal);
+        return EM_TRUE;
+    }
+
+    if (event->keyCode == 52 || key == '4') {
+        setMaterial(MaterialType::Copper);
+        return EM_TRUE;
+    }
+
+    if (event->keyCode == 53 || key == '5') {
+        setMaterial(MaterialType::Gold);
+        return EM_TRUE;
+    }
+
+    if (event->keyCode == 54 || key == '6') {
+        setMaterial(MaterialType::Silver);
+        return EM_TRUE;
+    }
+
+    if (event->keyCode == 48 || key == '0') {
+        setDebugView(0);
+        return EM_TRUE;
+    }
+
+    if (event->keyCode == 55 || key == '7') {
+        setDebugView(1);
+        return EM_TRUE;
+    }
+
+    if (event->keyCode == 56 || key == '8') {
+        setDebugView(2);
+        return EM_TRUE;
+    }
+
+    if (event->keyCode == 57 || key == '9') {
+        setDebugView(3);
+        return EM_TRUE;
+    }
+
+    if (key == 'q' || key == 'Q') {
+        setDebugView(4);
+        return EM_TRUE;
+    }
+
+    if (key == 'w' || key == 'W') {
+        setDebugView(5);
+        return EM_TRUE;
+    }
+
+    if (key == 'e' || key == 'E') {
+        setDebugView(6);
+        return EM_TRUE;
+    }
+
+    if (key == 'r' || key == 'R') {
+        setDebugView(7);
+        return EM_TRUE;
+    }
+
+    if (key == 't' || key == 'T') {
+        setDebugView(8);
+        return EM_TRUE;
+    }
+
+    if (key == 'y' || key == 'Y') {
+        setDebugView(9);
+        return EM_TRUE;
+    }
+
+    if (key == 'u' || key == 'U') {
+        setDebugView(10);
+        return EM_TRUE;
+    }
+
+    if (key == 'i' || key == 'I') {
+        gSpectralDebugIndex = (gSpectralDebugIndex + 1) % kSpectralSampleCount;
+        setDebugView(11);
+        return EM_TRUE;
+    }
+
+    return EM_FALSE;
+}
+
 void render() {
     updateCanvasSize();
 
@@ -126,13 +358,26 @@ void render() {
     glUniformMatrix4fv(gMVPUniform, 1, GL_FALSE, mvp.m);
     glUniform1f(gTimeUniform, static_cast<float>(emscripten_get_now() * 0.001));
     glUniform3f(gCameraPositionUniform, cameraPos.x, cameraPos.y, cameraPos.z);
+    glUniform1i(gDebugViewUniform, gDebugView);
+    glUniform1i(gSpectralDebugIndexUniform, gSpectralDebugIndex);
     uploadDirectionalLight(gLightDirectionUniform, gLight);
+    uploadEnvironment(
+        gEnvironmentLowColorUniform,
+        gEnvironmentHighColorUniform,
+        gEnvironmentHorizonColorUniform,
+        gEnvironmentSoftboxColorUniform,
+        gEnvironmentControlsUniform,
+        gEnvironment
+    );
     uploadMaterial(
         gMaterialBaseColorUniform,
         gMaterialRoughnessUniform,
         gMaterialSpecularStrengthUniform,
         gMaterialReflectivityUniform,
         gMaterialStructureUniform,
+        gSpectralWavelengthsUniform,
+        gOpticalEtaUniform,
+        gOpticalExtinctionUniform,
         gMaterial
     );
     drawGpuMesh(gSheetMesh);
@@ -160,12 +405,26 @@ int main() {
     gMaterialSpecularStrengthUniform = glGetUniformLocation(gProgram, "uMaterialSpecularStrength");
     gMaterialReflectivityUniform = glGetUniformLocation(gProgram, "uMaterialReflectivity");
     gMaterialStructureUniform = glGetUniformLocation(gProgram, "uMaterialStructure");
+    gSpectralWavelengthsUniform = glGetUniformLocation(gProgram, "uSpectralWavelengths[0]");
+    gOpticalEtaUniform = glGetUniformLocation(gProgram, "uOpticalEta[0]");
+    gOpticalExtinctionUniform = glGetUniformLocation(gProgram, "uOpticalExtinction[0]");
+    gEnvironmentLowColorUniform = glGetUniformLocation(gProgram, "uEnvLowColor");
+    gEnvironmentHighColorUniform = glGetUniformLocation(gProgram, "uEnvHighColor");
+    gEnvironmentHorizonColorUniform = glGetUniformLocation(gProgram, "uEnvHorizonColor");
+    gEnvironmentSoftboxColorUniform = glGetUniformLocation(gProgram, "uEnvSoftboxColor");
+    gEnvironmentControlsUniform = glGetUniformLocation(gProgram, "uEnvControls");
+    gDebugViewUniform = glGetUniformLocation(gProgram, "uDebugView");
+    gSpectralDebugIndexUniform = glGetUniformLocation(gProgram, "uSpectralDebugIndex");
     initSheetMesh();
 
     emscripten_set_mousedown_callback("#canvas", nullptr, EM_TRUE, onMouseDown);
     emscripten_set_mouseup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_TRUE, onMouseUp);
     emscripten_set_mousemove_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_TRUE, onMouseMove);
     emscripten_set_wheel_callback("#canvas", nullptr, EM_TRUE, onWheel);
+    emscripten_set_keydown_callback("#canvas", nullptr, EM_TRUE, onKeyDown);
+    emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, nullptr, EM_TRUE, onKeyDown);
+    emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_TRUE, onKeyDown);
+    setMaterial(MaterialType::AluminumFoil);
 
     emscripten_set_main_loop(render, 0, 1);
     return 0;
