@@ -8,6 +8,7 @@
 
 #include "gpu.h"
 #include "light.h"
+#include "material.h"
 #include "math3d.h"
 #include "shaders.h"
 #include "sheet_mesh.h"
@@ -17,6 +18,12 @@ GpuMesh gSheetMesh = {};
 GLint gMVPUniform = -1;
 GLint gTimeUniform = -1;
 GLint gLightDirectionUniform = -1;
+GLint gCameraPositionUniform = -1;
+GLint gMaterialBaseColorUniform = -1;
+GLint gMaterialRoughnessUniform = -1;
+GLint gMaterialSpecularStrengthUniform = -1;
+GLint gMaterialReflectivityUniform = -1;
+GLint gMaterialStructureUniform = -1;
 
 int gCanvasWidth = 800;
 int gCanvasHeight = 600;
@@ -28,6 +35,7 @@ float gCameraYaw = 0.65f;
 float gCameraPitch = 0.55f;
 float gCameraDistance = 3.4f;
 DirectionalLight gLight = createDefaultDirectionalLight();
+Material gMaterial = createDefaultMetalMaterial();
 
 const float kPi = 3.14159265358979323846f;
 
@@ -109,14 +117,24 @@ void render() {
 
     const float aspect = static_cast<float>(gCanvasWidth) / static_cast<float>(gCanvasHeight);
     const Mat4 projection = perspective(50.0f * kPi / 180.0f, aspect, 0.01f, 100.0f);
-    const Mat4 view = lookAt(cameraPosition(), {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+    const Vec3 cameraPos = cameraPosition();
+    const Mat4 view = lookAt(cameraPos, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
     const Mat4 model = identity();
     const Mat4 mvp = multiply(projection, multiply(view, model));
 
     glUseProgram(gProgram);
     glUniformMatrix4fv(gMVPUniform, 1, GL_FALSE, mvp.m);
     glUniform1f(gTimeUniform, static_cast<float>(emscripten_get_now() * 0.001));
+    glUniform3f(gCameraPositionUniform, cameraPos.x, cameraPos.y, cameraPos.z);
     uploadDirectionalLight(gLightDirectionUniform, gLight);
+    uploadMaterial(
+        gMaterialBaseColorUniform,
+        gMaterialRoughnessUniform,
+        gMaterialSpecularStrengthUniform,
+        gMaterialReflectivityUniform,
+        gMaterialStructureUniform,
+        gMaterial
+    );
     drawGpuMesh(gSheetMesh);
 }
 
@@ -136,6 +154,12 @@ int main() {
     gMVPUniform = glGetUniformLocation(gProgram, "uMVP");
     gTimeUniform = glGetUniformLocation(gProgram, "uTime");
     gLightDirectionUniform = glGetUniformLocation(gProgram, "uLightDir");
+    gCameraPositionUniform = glGetUniformLocation(gProgram, "uCameraPos");
+    gMaterialBaseColorUniform = glGetUniformLocation(gProgram, "uMaterialBaseColor");
+    gMaterialRoughnessUniform = glGetUniformLocation(gProgram, "uMaterialRoughness");
+    gMaterialSpecularStrengthUniform = glGetUniformLocation(gProgram, "uMaterialSpecularStrength");
+    gMaterialReflectivityUniform = glGetUniformLocation(gProgram, "uMaterialReflectivity");
+    gMaterialStructureUniform = glGetUniformLocation(gProgram, "uMaterialStructure");
     initSheetMesh();
 
     emscripten_set_mousedown_callback("#canvas", nullptr, EM_TRUE, onMouseDown);
