@@ -8,6 +8,9 @@ uniform float uTime;
 
 out vec3 vWorldPos;
 out vec3 vNormal;
+out vec3 vTangent;
+out vec3 vBitangent;
+out vec3 vGrooveDir;
 
 void main() {
     float primaryWave = sin(aPos.x * 6.0 + uTime * 1.4);
@@ -15,10 +18,19 @@ void main() {
     float height = primaryWave * 0.09 + crossWave * 0.04;
     float primarySlopeX = cos(aPos.x * 6.0 + uTime * 1.4) * 6.0 * 0.09;
     float crossSlope = cos((aPos.x + aPos.z) * 4.0 - uTime * 0.9) * 4.0 * 0.04;
+    float dHeightDx = primarySlopeX + crossSlope;
+    float dHeightDz = crossSlope;
+
+    vec3 tangent = normalize(vec3(1.0, dHeightDx, 0.0));
+    vec3 bitangent = normalize(vec3(0.0, dHeightDz, 1.0));
+    vec3 normal = normalize(cross(bitangent, tangent));
 
     vec3 displacedPos = vec3(aPos.x, height, aPos.z);
     vWorldPos = displacedPos;
-    vNormal = normalize(vec3(-(primarySlopeX + crossSlope), 1.0, -crossSlope));
+    vNormal = normal;
+    vTangent = tangent;
+    vBitangent = bitangent;
+    vGrooveDir = bitangent;
     gl_Position = uMVP * vec4(displacedPos, 1.0);
 }
 )";
@@ -28,6 +40,9 @@ precision mediump float;
 
 in vec3 vWorldPos;
 in vec3 vNormal;
+in vec3 vTangent;
+in vec3 vBitangent;
+in vec3 vGrooveDir;
 uniform vec3 uLightDir;
 uniform vec3 uCameraPos;
 uniform vec3 uMaterialBaseColor;
@@ -106,6 +121,10 @@ vec3 spectralMaterialColor(float cosTheta) {
     return clamp(spectrumRgb / max(rgbWeight, vec3(0.001)), 0.0, 1.0);
 }
 
+float luminance(vec3 color) {
+    return dot(color, vec3(0.2126, 0.7152, 0.0722));
+}
+
 vec3 proceduralEnvironment(vec3 dir) {
     float skyMix = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
     vec3 env = mix(uEnvLowColor, uEnvHighColor, skyMix);
@@ -129,10 +148,59 @@ vec3 proceduralEnvironment(vec3 dir) {
     return env;
 }
 
+vec3 diffractionColor(
+    vec3 normal,
+    vec3 grooveDir,
+    vec3 lightDir,
+    vec3 viewDir,
+    float grooveSpacingNm,
+    float grooveDepthNm,
+    float roughness,
+    float disorderStrength
+) {
+    vec3 acrossGroove = normalize(cross(grooveDir, normal));
+    float lightAcross = dot(lightDir, acrossGroove);
+    float viewAcross = dot(viewDir, acrossGroove);
+    float gratingTerm = viewAcross - lightAcross;
+    float depthStrength = clamp(grooveDepthNm / 70.0, 0.0, 1.0);
+    float bandWidth = mix(0.012, 0.075, clamp(roughness + disorderStrength * 0.35, 0.0, 1.0));
+
+    vec3 color = vec3(0.0);
+    float weight = 0.0;
+
+    for (int i = 0; i < 6; ++i) {
+        float wavelength = uSpectralWavelengths[i];
+        vec3 sampleRgb = wavelengthToRgb(wavelength);
+
+        for (int order = -2; order <= 2; ++order) {
+            if (order == 0) {
+                continue;
+            }
+
+            float target = float(order) * wavelength / grooveSpacingNm;
+            float error = abs(gratingTerm - target);
+            float band = 1.0 - smoothstep(0.0, bandWidth, error);
+            float orderWeight = 1.0 / (1.0 + abs(float(order)));
+            float contribution = band * orderWeight * depthStrength;
+            color += sampleRgb * contribution;
+            weight += contribution;
+        }
+    }
+
+    if (weight <= 0.0001) {
+        return vec3(0.0);
+    }
+
+    return clamp(color / weight, 0.0, 1.0) * clamp(weight * 1.4, 0.0, 1.0);
+}
+
 void main() {
     vec2 cell = abs(fract(vWorldPos.xz * 24.0) - 0.5);
     float line = 1.0 - smoothstep(0.465, 0.5, min(cell.x, cell.y));
     vec3 normal = normalize(vNormal);
+    vec3 tangent = normalize(vTangent);
+    vec3 bitangent = normalize(vBitangent);
+    vec3 grooveDir = normalize(vGrooveDir);
     vec3 lightDir = normalize(uLightDir);
     vec3 viewDir = normalize(uCameraPos - vWorldPos);
     vec3 halfDir = normalize(lightDir + viewDir);
@@ -176,8 +244,18 @@ void main() {
 
     if (uDebugView == 6) {
         vec3 normalColor = normal * 0.5 + 0.5;
-        float grooveBands = smoothstep(0.42, 0.5, abs(fract(vWorldPos.x * 18.0) - 0.5));
-        FragColor = vec4(mix(normalColor, vec3(1.0, 1.0, 0.1), grooveBands * 0.55), 1.0);
+        vec2 acrossGroove = normalize(vec2(grooveDir.z, -grooveDir.x));
+        float groovePhase = dot(vWorldPos.xz, acrossGroove) * 18.0;
+        float grooveBands = smoothstep(0.42, 0.5, abs(fract(groovePhase) - 0.5));
+        vec3 grooveColor = grooveDir * 0.5 + 0.5;
+        FragColor = vec4(mix(normalColor, grooveColor, 0.45) + vec3(grooveBands * 0.22), 1.0);
+        return;
+    }
+
+    if (uDebugView == 13) {
+        vec3 tangentColor = tangent * 0.5 + 0.5;
+        vec3 bitangentColor = bitangent * 0.5 + 0.5;
+        FragColor = vec4(tangentColor.r, bitangentColor.g, normal.b * 0.5 + 0.5, 1.0);
         return;
     }
 
@@ -223,11 +301,44 @@ void main() {
         return;
     }
 
-    vec3 materialColor = mix(uMaterialBaseColor, spectralColor, 0.68);
+    if (uDebugView == 12) {
+        vec3 frontReflectance = spectralMaterialColor(1.0);
+        vec3 currentReflectance = spectralMaterialColor(max(dot(normal, viewDir), 0.0));
+        vec3 glancingReflectance = spectralMaterialColor(0.08);
+        FragColor = vec4(
+            luminance(frontReflectance),
+            luminance(currentReflectance),
+            luminance(glancingReflectance),
+            1.0
+        );
+        return;
+    }
+
+    vec3 rainbowColor = diffractionColor(
+        normal,
+        grooveDir,
+        lightDir,
+        viewDir,
+        grooveSpacingNm,
+        grooveDepthNm,
+        roughness,
+        disorderStrength
+    );
+
+    if (uDebugView == 14) {
+        FragColor = vec4(rainbowColor, 1.0);
+        return;
+    }
+
+    vec3 conductorColor = spectralColor;
+    vec3 materialColor = mix(uMaterialBaseColor, conductorColor, 0.86);
     vec3 diffuseColor = materialColor * (0.025 + diffuse * 0.08);
     vec3 layerTint = mix(vec3(1.0), vec3(0.94, 0.98, 1.04), layerBoost * 0.22);
-    vec3 reflectionColor = proceduralEnvironment(normalize(reflectionDir)) * materialColor * layerTint;
-    vec3 litColor = mix(diffuseColor, reflectionColor, reflectivity) + vec3(specular);
+    vec3 reflectionColor = proceduralEnvironment(normalize(reflectionDir)) * conductorColor * layerTint;
+    vec3 specularColor = conductorColor * specular;
+    float rainbowStrength = clamp(0.20 + grooveDepthNm / 95.0, 0.0, 0.82);
+    vec3 metalColor = mix(diffuseColor, reflectionColor, reflectivity) + specularColor;
+    vec3 litColor = mix(metalColor, metalColor + rainbowColor * 1.35, rainbowStrength);
     vec3 gridColor = litColor * 0.62;
     FragColor = vec4(mix(litColor, gridColor, line * 0.14), 1.0);
 }

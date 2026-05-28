@@ -44,7 +44,10 @@ EM_JS(void, updateOverlay, (
         'Reflection direction',
         'Spectral material color',
         'Optical n/k summary',
-        'Single wavelength'
+        'Single wavelength',
+        'Angle reflectance',
+        'Tangent frame',
+        'Diffraction only'
     ];
     const debugName = debugNames[debugView] || 'Unknown';
 
@@ -62,7 +65,7 @@ EM_JS(void, updateOverlay, (
         '<div>Spectral sample: #' + spectralIndex + ' / ' + spectralWavelengthNm.toFixed(1) + ' nm</div>' +
         '<br>' +
         '<div class="muted">Materials: 1 Al, 2 plastic, 3 coated, 4 Cu, 5 Au, 6 Ag</div>' +
-        '<div class="muted">Views: 0 shaded, 7 spacing, 8 depth, 9 layer, Q disorder, W height, E normals, R env, T reflection, Y spectral, U n/k, I wavelength</div>';
+        '<div class="muted">Views: 0 shaded, 7 spacing, 8 depth, 9 layer, Q disorder, W height, E normals, R env, T reflection, Y spectral, U n/k, I wavelength, O angle, P frame, D diffraction</div>';
 });
 
 GLuint gProgram = 0;
@@ -175,6 +178,12 @@ void setDebugView(int debugView) {
         emscripten_run_script("document.title = 'Spectral Sheet Renderer - Debug Optical Constants';");
     } else if (debugView == 11) {
         emscripten_run_script("document.title = 'Spectral Sheet Renderer - Debug Single Wavelength';");
+    } else if (debugView == 12) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Debug Angle Reflectance';");
+    } else if (debugView == 13) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Debug Tangent Frame';");
+    } else if (debugView == 14) {
+        emscripten_run_script("document.title = 'Spectral Sheet Renderer - Debug Diffraction';");
     }
 
     refreshOverlay();
@@ -335,6 +344,21 @@ EM_BOOL onKeyDown(int, const EmscriptenKeyboardEvent* event, void*) {
     if (key == 'i' || key == 'I') {
         gSpectralDebugIndex = (gSpectralDebugIndex + 1) % kSpectralSampleCount;
         setDebugView(11);
+        return EM_TRUE;
+    }
+
+    if (key == 'o' || key == 'O') {
+        setDebugView(12);
+        return EM_TRUE;
+    }
+
+    if (key == 'p' || key == 'P') {
+        setDebugView(13);
+        return EM_TRUE;
+    }
+
+    if (key == 'd' || key == 'D') {
+        setDebugView(14);
         return EM_TRUE;
     }
 
