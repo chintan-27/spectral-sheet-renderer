@@ -332,13 +332,15 @@ void main() {
 
     vec3 conductorColor = spectralColor;
     vec3 materialColor = mix(uMaterialBaseColor, conductorColor, 0.86);
-    vec3 diffuseColor = materialColor * (0.025 + diffuse * 0.08);
+    vec3 diffuseColor = materialColor * (0.020 + diffuse * 0.065);
     vec3 layerTint = mix(vec3(1.0), vec3(0.94, 0.98, 1.04), layerBoost * 0.22);
     vec3 reflectionColor = proceduralEnvironment(normalize(reflectionDir)) * conductorColor * layerTint;
     vec3 specularColor = conductorColor * specular;
-    float rainbowStrength = clamp(0.20 + grooveDepthNm / 95.0, 0.0, 0.82);
-    vec3 metalColor = mix(diffuseColor, reflectionColor, reflectivity) + specularColor;
-    vec3 litColor = mix(metalColor, metalColor + rainbowColor * 1.35, rainbowStrength);
+    float rainbowStrength = clamp(0.18 + grooveDepthNm / 110.0, 0.0, 0.72);
+    float reflectionBias = clamp(reflectivity * 0.85 + fresnel * 0.25, 0.0, 1.0);
+    vec3 metalColor = mix(diffuseColor, reflectionColor, reflectionBias) + specularColor;
+    vec3 rainbowReflection = rainbowColor * conductorColor * (0.55 + reflectionBias * 0.65);
+    vec3 litColor = clamp(metalColor + rainbowReflection * rainbowStrength, 0.0, 1.6);
     vec3 gridColor = litColor * 0.62;
     FragColor = vec4(mix(litColor, gridColor, line * 0.14), 1.0);
 }
