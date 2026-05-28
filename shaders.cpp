@@ -171,6 +171,36 @@ vec3 proceduralEnvironment(vec3 dir) {
     return env;
 }
 
+float fragHash21(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+float fragValueNoise(vec2 p) {
+    vec2 cell = floor(p);
+    vec2 local = fract(p);
+    vec2 blend = local * local * (3.0 - 2.0 * local);
+
+    float a = fragHash21(cell);
+    float b = fragHash21(cell + vec2(1.0, 0.0));
+    float c = fragHash21(cell + vec2(0.0, 1.0));
+    float d = fragHash21(cell + vec2(1.0, 1.0));
+
+    return mix(mix(a, b, blend.x), mix(c, d, blend.x), blend.y);
+}
+
+float fragFbm(vec2 p) {
+    float total = 0.0;
+    float amplitude = 0.5;
+
+    for (int i = 0; i < 4; ++i) {
+        total += fragValueNoise(p) * amplitude;
+        p = p * 2.03 + vec2(17.7, 9.2);
+        amplitude *= 0.5;
+    }
+
+    return total;
+}
+
 vec3 diffractionColor(
     vec3 normal,
     vec3 grooveDir,
@@ -238,6 +268,14 @@ void main() {
     float grooveScale = clamp(grooveDepthNm / grooveSpacingNm, 0.0, 0.25);
     float layerBoost = clamp(layerThicknessNm / 120.0, 0.0, 1.0);
     float roughness = clamp(uMaterialRoughness + disorderStrength * 0.035 + grooveScale * 0.08, 0.015, 1.0);
+    float grainNoise = fragFbm(vWorldPos.xz * 3.0 + vec2(4.2, 9.1));
+    float spacingNoise = fragFbm(vWorldPos.xz * 7.0 + vec2(15.0, 2.7));
+    float defectNoise = fragFbm(vWorldPos.xz * 13.0 + vec2(0.5, 21.0));
+    float grooveTurn = (grainNoise - 0.5) * disorderStrength * 0.75;
+    grooveDir = normalize(grooveDir + tangent * grooveTurn);
+    float localGrooveSpacingNm = grooveSpacingNm * (1.0 + (spacingNoise - 0.5) * disorderStrength * 0.18);
+    localGrooveSpacingNm = max(localGrooveSpacingNm, 1.0);
+    float defectMask = mix(1.0, smoothstep(0.16, 0.72, defectNoise), disorderStrength * 0.42);
 
     if (uDebugView == 1) {
         float value = clamp((grooveSpacingNm - 500.0) / 1200.0, 0.0, 1.0);
@@ -344,11 +382,12 @@ void main() {
         grooveDir,
         lightDir,
         viewDir,
-        grooveSpacingNm,
+        localGrooveSpacingNm,
         grooveDepthNm,
         roughness,
         disorderStrength
     );
+    rainbowColor *= defectMask;
 
     if (uDebugView == 14) {
         FragColor = vec4(rainbowColor, 1.0);
