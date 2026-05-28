@@ -12,7 +12,7 @@ Try it in the browser:
 
 ## Preview
 
-![Spectral Sheet Renderer preview]()
+![Spectral Sheet Renderer preview](https://github.com/chintan-27/spectral-sheet-renderer/blob/main/docs/GIF.gif)
 
 *A real-time spectral foil sheet with metallic reflection, diffraction, thin-film color shifts, roughness, folds, wrinkles, and procedural lighting.*
 
