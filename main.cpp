@@ -16,6 +16,7 @@
 
 EM_JS(void, updateOverlay, (
     const char* materialNamePtr,
+    const char* lightNamePtr,
     int debugView,
     float roughness,
     float reflectivity,
@@ -23,6 +24,7 @@ EM_JS(void, updateOverlay, (
     float grooveDepthNm,
     float layerThicknessNm,
     float disorderStrength,
+    float interactionStrength,
     int spectralIndex,
     float spectralWavelengthNm
 ), {
@@ -32,6 +34,7 @@ EM_JS(void, updateOverlay, (
     }
 
     const materialName = UTF8ToString(materialNamePtr);
+    const lightName = UTF8ToString(lightNamePtr);
     const debugNames = [
         'Shaded render',
         'Groove spacing',
@@ -54,6 +57,7 @@ EM_JS(void, updateOverlay, (
     overlay.innerHTML =
         '<div class="title">Material Debug</div>' +
         '<div>Material: ' + materialName + '</div>' +
+        '<div>Light: ' + lightName + '</div>' +
         '<div>View: ' + debugName + '</div>' +
         '<br>' +
         '<div>Roughness: ' + roughness.toFixed(3) + '</div>' +
@@ -62,9 +66,11 @@ EM_JS(void, updateOverlay, (
         '<div>Groove depth: ' + grooveDepthNm.toFixed(1) + ' nm</div>' +
         '<div>Layer thickness: ' + layerThicknessNm.toFixed(1) + ' nm</div>' +
         '<div>Disorder: ' + disorderStrength.toFixed(3) + '</div>' +
+        '<div>Sheet pull: ' + interactionStrength.toFixed(3) + '</div>' +
         '<div>Spectral sample: #' + spectralIndex + ' / ' + spectralWavelengthNm.toFixed(1) + ' nm</div>' +
         '<br>' +
         '<div class="muted">Materials: 1 Al, 2 plastic, 3 coated, 4 Cu, 5 Au, 6 Ag</div>' +
+        '<div class="muted">Lights: L cycles presets. Motion: Shift + drag pulls the sheet.</div>' +
         '<div class="muted">Views: 0 shaded, 7 spacing, 8 depth, 9 layer, Q disorder, W height, E normals, R env, T reflection, Y spectral, U n/k, I wavelength, O angle, P frame, D diffraction</div>';
 });
 
@@ -72,6 +78,7 @@ GLuint gProgram = 0;
 GpuMesh gSheetMesh = {};
 GLint gMVPUniform = -1;
 GLint gTimeUniform = -1;
+GLint gInteractionUniform = -1;
 GLint gLightDirectionUniform = -1;
 GLint gCameraPositionUniform = -1;
 GLint gMaterialBaseColorUniform = -1;
@@ -94,22 +101,29 @@ int gCanvasWidth = 800;
 int gCanvasHeight = 600;
 
 bool gDragging = false;
+bool gSheetPulling = false;
 double gLastMouseX = 0.0;
 double gLastMouseY = 0.0;
 float gCameraYaw = 0.65f;
 float gCameraPitch = 0.55f;
 float gCameraDistance = 3.4f;
+float gInteractionX = 0.0f;
+float gInteractionZ = 0.0f;
+float gInteractionStrength = 0.0f;
+float gInteractionRadius = 0.38f;
 DirectionalLight gLight = createDefaultDirectionalLight();
 Material gMaterial = createDefaultMetalMaterial();
 Environment gEnvironment = createDefaultEnvironment();
 int gDebugView = 0;
 int gSpectralDebugIndex = 0;
+int gLightPresetIndex = 0;
 
 const float kPi = 3.14159265358979323846f;
 
 void refreshOverlay() {
     updateOverlay(
         materialName(gMaterial.type),
+        lightPresetName(gLightPresetIndex),
         gDebugView,
         gMaterial.roughness,
         gMaterial.reflectivity,
@@ -117,6 +131,7 @@ void refreshOverlay() {
         gMaterial.structure.grooveDepthNm,
         gMaterial.structure.layerThicknessNm,
         gMaterial.structure.disorderStrength,
+        gInteractionStrength,
         gSpectralDebugIndex,
         gMaterial.optical.wavelengthsNm[gSpectralDebugIndex]
     );
@@ -189,6 +204,12 @@ void setDebugView(int debugView) {
     refreshOverlay();
 }
 
+void setLightPreset(int presetIndex) {
+    gLightPresetIndex = (presetIndex % kLightPresetCount + kLightPresetCount) % kLightPresetCount;
+    gLight = createDirectionalLightPreset(gLightPresetIndex);
+    refreshOverlay();
+}
+
 void updateCanvasSize() {
     double cssWidth = 0.0;
     double cssHeight = 0.0;
@@ -215,9 +236,29 @@ Vec3 cameraPosition() {
     };
 }
 
+void updateSheetInteractionFromMouse(double clientX, double clientY) {
+    double cssWidth = 1.0;
+    double cssHeight = 1.0;
+    emscripten_get_element_css_size("#canvas", &cssWidth, &cssHeight);
+
+    const float u = std::clamp(static_cast<float>(clientX / std::max(cssWidth, 1.0)), 0.0f, 1.0f);
+    const float v = std::clamp(static_cast<float>(clientY / std::max(cssHeight, 1.0)), 0.0f, 1.0f);
+    gInteractionX = (u - 0.5f) * 2.0f;
+    gInteractionZ = (v - 0.5f) * 2.0f;
+    gInteractionStrength = 1.0f;
+}
+
 EM_BOOL onMouseDown(int, const EmscriptenMouseEvent* event, void*) {
     if (event->button == 0) {
         emscripten_run_script("Module.canvas.focus();");
+        if (event->shiftKey) {
+            gSheetPulling = true;
+            gDragging = false;
+            updateSheetInteractionFromMouse(event->clientX, event->clientY);
+            refreshOverlay();
+            return EM_TRUE;
+        }
+
         gDragging = true;
         gLastMouseX = event->clientX;
         gLastMouseY = event->clientY;
@@ -228,10 +269,17 @@ EM_BOOL onMouseDown(int, const EmscriptenMouseEvent* event, void*) {
 
 EM_BOOL onMouseUp(int, const EmscriptenMouseEvent*, void*) {
     gDragging = false;
+    gSheetPulling = false;
     return EM_TRUE;
 }
 
 EM_BOOL onMouseMove(int, const EmscriptenMouseEvent* event, void*) {
+    if (gSheetPulling) {
+        updateSheetInteractionFromMouse(event->clientX, event->clientY);
+        refreshOverlay();
+        return EM_TRUE;
+    }
+
     if (!gDragging) {
         return EM_FALSE;
     }
@@ -362,6 +410,11 @@ EM_BOOL onKeyDown(int, const EmscriptenKeyboardEvent* event, void*) {
         return EM_TRUE;
     }
 
+    if (key == 'l' || key == 'L') {
+        setLightPreset(gLightPresetIndex + 1);
+        return EM_TRUE;
+    }
+
     return EM_FALSE;
 }
 
@@ -381,6 +434,13 @@ void render() {
     glUseProgram(gProgram);
     glUniformMatrix4fv(gMVPUniform, 1, GL_FALSE, mvp.m);
     glUniform1f(gTimeUniform, static_cast<float>(emscripten_get_now() * 0.001));
+    if (!gSheetPulling) {
+        gInteractionStrength *= 0.965f;
+        if (gInteractionStrength < 0.001f) {
+            gInteractionStrength = 0.0f;
+        }
+    }
+    glUniform4f(gInteractionUniform, gInteractionX, gInteractionZ, gInteractionStrength, gInteractionRadius);
     glUniform3f(gCameraPositionUniform, cameraPos.x, cameraPos.y, cameraPos.z);
     glUniform1i(gDebugViewUniform, gDebugView);
     glUniform1i(gSpectralDebugIndexUniform, gSpectralDebugIndex);
@@ -422,6 +482,7 @@ int main() {
     gProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
     gMVPUniform = glGetUniformLocation(gProgram, "uMVP");
     gTimeUniform = glGetUniformLocation(gProgram, "uTime");
+    gInteractionUniform = glGetUniformLocation(gProgram, "uInteraction");
     gLightDirectionUniform = glGetUniformLocation(gProgram, "uLightDir");
     gCameraPositionUniform = glGetUniformLocation(gProgram, "uCameraPos");
     gMaterialBaseColorUniform = glGetUniformLocation(gProgram, "uMaterialBaseColor");
@@ -449,6 +510,7 @@ int main() {
     emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, nullptr, EM_TRUE, onKeyDown);
     emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_TRUE, onKeyDown);
     setMaterial(MaterialType::AluminumFoil);
+    setLightPreset(0);
 
     emscripten_set_main_loop(render, 0, 1);
     return 0;

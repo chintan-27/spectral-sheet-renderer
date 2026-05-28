@@ -5,6 +5,7 @@ layout(location = 0) in vec3 aPos;
 
 uniform mat4 uMVP;
 uniform float uTime;
+uniform vec4 uInteraction;
 
 out vec3 vWorldPos;
 out vec3 vNormal;
@@ -47,8 +48,12 @@ float sheetHeight(vec2 p) {
     float crossWave = sin((p.x * 0.65 + p.y) * 4.2 - uTime * 0.72) * 0.040;
     float broadFolds = (fbm(p * 1.35 + vec2(uTime * 0.035, -uTime * 0.020)) - 0.5) * 0.110;
     float fineWrinkles = (fbm(p * 8.0 + vec2(uTime * 0.10, uTime * 0.06)) - 0.5) * 0.022;
+    vec2 pointerDelta = p - uInteraction.xy;
+    float radius = max(uInteraction.w, 0.05);
+    float pointerFalloff = exp(-dot(pointerDelta, pointerDelta) / (radius * radius));
+    float pointerPull = pointerFalloff * uInteraction.z * (0.16 + sin(uTime * 7.0) * 0.020);
 
-    return primaryWave + crossWave + broadFolds + fineWrinkles;
+    return primaryWave + crossWave + broadFolds + fineWrinkles + pointerPull;
 }
 
 void main() {
