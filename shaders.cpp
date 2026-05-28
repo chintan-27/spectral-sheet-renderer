@@ -186,7 +186,9 @@ vec3 diffractionColor(
     float viewAcross = dot(viewDir, acrossGroove);
     float gratingTerm = viewAcross - lightAcross;
     float depthStrength = clamp(grooveDepthNm / 70.0, 0.0, 1.0);
-    float bandWidth = mix(0.012, 0.075, clamp(roughness + disorderStrength * 0.35, 0.0, 1.0));
+    float roughDisorder = clamp(roughness + disorderStrength * 0.35, 0.0, 1.0);
+    float bandWidth = mix(0.010, 0.085, roughDisorder);
+    float coherence = mix(1.0, 0.28, smoothstep(0.12, 0.88, roughDisorder));
 
     vec3 color = vec3(0.0);
     float weight = 0.0;
@@ -204,7 +206,7 @@ vec3 diffractionColor(
             float error = abs(gratingTerm - target);
             float band = 1.0 - smoothstep(0.0, bandWidth, error);
             float orderWeight = 1.0 / (1.0 + abs(float(order)));
-            float contribution = band * orderWeight * depthStrength;
+            float contribution = band * orderWeight * depthStrength * coherence;
             color += sampleRgb * contribution;
             weight += contribution;
         }
