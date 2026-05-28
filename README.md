@@ -18,7 +18,7 @@ Try it in the browser:
 
 For a higher-quality capture, see:
 
-[Watch the demo video](docs/image.png)
+[Watch the demo video](https://github.com/chintan-27/spectral-sheet-renderer/blob/main/docs/DEMO.mp4)
 
 ## What it does
 
