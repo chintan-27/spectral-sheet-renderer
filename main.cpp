@@ -1,28 +1,22 @@
 #include <algorithm>
 #include <cmath>
-#include <iostream>
 #include <vector>
 
 #include <GLES3/gl3.h>
 #include <emscripten/emscripten.h>
 #include <emscripten/html5.h>
 
-struct Vec3 {
-    float x;
-    float y;
-    float z;
-};
-
-struct Mat4 {
-    float m[16];
-};
+#include "gpu.h"
+#include "light.h"
+#include "math3d.h"
+#include "shaders.h"
+#include "sheet_mesh.h"
 
 GLuint gProgram = 0;
-GLuint gVBO = 0;
-GLuint gEBO = 0;
-GLuint gVAO = 0;
+GpuMesh gSheetMesh = {};
 GLint gMVPUniform = -1;
-GLsizei gIndexCount = 0;
+GLint gTimeUniform = -1;
+GLint gLightDirectionUniform = -1;
 
 int gCanvasWidth = 800;
 int gCanvasHeight = 600;
@@ -33,227 +27,15 @@ double gLastMouseY = 0.0;
 float gCameraYaw = 0.65f;
 float gCameraPitch = 0.55f;
 float gCameraDistance = 3.4f;
+DirectionalLight gLight = createDefaultDirectionalLight();
 
 const float kPi = 3.14159265358979323846f;
-
-const char* vertexShaderSource = R"(#version 300 es
-layout(location = 0) in vec3 aPos;
-
-uniform mat4 uMVP;
-
-out vec3 vWorldPos;
-
-void main() {
-    vWorldPos = aPos;
-    gl_Position = uMVP * vec4(aPos, 1.0);
-}
-)";
-
-const char* fragmentShaderSource = R"(#version 300 es
-precision mediump float;
-
-in vec3 vWorldPos;
-out vec4 FragColor;
-
-void main() {
-    vec2 cell = abs(fract(vWorldPos.xz * 24.0) - 0.5);
-    float line = 1.0 - smoothstep(0.465, 0.5, min(cell.x, cell.y));
-    vec3 baseColor = vec3(0.42, 0.55, 0.63);
-    vec3 gridColor = vec3(0.08, 0.12, 0.15);
-    FragColor = vec4(mix(baseColor, gridColor, line * 0.55), 1.0);
-}
-)";
-
-Vec3 subtract(Vec3 a, Vec3 b) {
-    return {a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-Vec3 cross(Vec3 a, Vec3 b) {
-    return {
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x
-    };
-}
-
-float dot(Vec3 a, Vec3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-Vec3 normalize(Vec3 v) {
-    const float length = std::sqrt(dot(v, v));
-    if (length <= 0.000001f) {
-        return {0.0f, 0.0f, 0.0f};
-    }
-    return {v.x / length, v.y / length, v.z / length};
-}
-
-Mat4 identity() {
-    Mat4 result = {};
-    result.m[0] = 1.0f;
-    result.m[5] = 1.0f;
-    result.m[10] = 1.0f;
-    result.m[15] = 1.0f;
-    return result;
-}
-
-Mat4 multiply(Mat4 a, Mat4 b) {
-    Mat4 result = {};
-    for (int col = 0; col < 4; ++col) {
-        for (int row = 0; row < 4; ++row) {
-            float sum = 0.0f;
-            for (int k = 0; k < 4; ++k) {
-                sum += a.m[k * 4 + row] * b.m[col * 4 + k];
-            }
-            result.m[col * 4 + row] = sum;
-        }
-    }
-    return result;
-}
-
-Mat4 perspective(float fovYRadians, float aspect, float nearPlane, float farPlane) {
-    const float f = 1.0f / std::tan(fovYRadians * 0.5f);
-    Mat4 result = {};
-    result.m[0] = f / aspect;
-    result.m[5] = f;
-    result.m[10] = (farPlane + nearPlane) / (nearPlane - farPlane);
-    result.m[11] = -1.0f;
-    result.m[14] = (2.0f * farPlane * nearPlane) / (nearPlane - farPlane);
-    return result;
-}
-
-Mat4 lookAt(Vec3 eye, Vec3 target, Vec3 up) {
-    const Vec3 f = normalize(subtract(target, eye));
-    const Vec3 s = normalize(cross(f, up));
-    const Vec3 u = cross(s, f);
-
-    Mat4 result = identity();
-    result.m[0] = s.x;
-    result.m[4] = s.y;
-    result.m[8] = s.z;
-    result.m[1] = u.x;
-    result.m[5] = u.y;
-    result.m[9] = u.z;
-    result.m[2] = -f.x;
-    result.m[6] = -f.y;
-    result.m[10] = -f.z;
-    result.m[12] = -dot(s, eye);
-    result.m[13] = -dot(u, eye);
-    result.m[14] = dot(f, eye);
-    return result;
-}
-
-GLuint compileShader(GLenum type, const char* source) {
-    GLuint shader = glCreateShader(type);
-    glShaderSource(shader, 1, &source, nullptr);
-    glCompileShader(shader);
-
-    GLint success;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetShaderInfoLog(shader, 512, nullptr, infoLog);
-        std::cerr << "ERROR::SHADER::COMPILATION_FAILED\n" << infoLog << std::endl;
-    }
-    return shader;
-}
-
-GLuint createProgram(const char* vertexSource, const char* fragmentSource) {
-    GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource);
-    GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentSource);
-
-    GLuint program = glCreateProgram();
-    glAttachShader(program, vertexShader);
-    glAttachShader(program, fragmentShader);
-    glLinkProgram(program);
-
-    GLint success;
-    glGetProgramiv(program, GL_LINK_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetProgramInfoLog(program, 512, nullptr, infoLog);
-        std::cerr << "ERROR::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
-    }
-
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-
-    return program;
-}
-
-void generateSheetMesh(
-    int rows,
-    int cols,
-    float width,
-    float depth,
-    std::vector<float>& vertices,
-    std::vector<unsigned int>& indices
-) {
-    vertices.clear();
-    indices.clear();
-    vertices.reserve(static_cast<size_t>((rows + 1) * (cols + 1) * 3));
-    indices.reserve(static_cast<size_t>(rows * cols * 6));
-
-    for (int row = 0; row <= rows; ++row) {
-        const float v = static_cast<float>(row) / static_cast<float>(rows);
-        for (int col = 0; col <= cols; ++col) {
-            const float u = static_cast<float>(col) / static_cast<float>(cols);
-            vertices.push_back(width * (u - 0.5f));
-            vertices.push_back(0.0f);
-            vertices.push_back(depth * (v - 0.5f));
-        }
-    }
-
-    for (int row = 0; row < rows; ++row) {
-        for (int col = 0; col < cols; ++col) {
-            const unsigned int topLeft = static_cast<unsigned int>(row * (cols + 1) + col);
-            const unsigned int topRight = topLeft + 1;
-            const unsigned int bottomLeft = static_cast<unsigned int>((row + 1) * (cols + 1) + col);
-            const unsigned int bottomRight = bottomLeft + 1;
-
-            indices.push_back(topLeft);
-            indices.push_back(bottomLeft);
-            indices.push_back(topRight);
-
-            indices.push_back(topRight);
-            indices.push_back(bottomLeft);
-            indices.push_back(bottomRight);
-        }
-    }
-}
 
 void initSheetMesh() {
     std::vector<float> vertices;
     std::vector<unsigned int> indices;
     generateSheetMesh(48, 48, 2.0f, 2.0f, vertices, indices);
-    gIndexCount = static_cast<GLsizei>(indices.size());
-
-    glGenVertexArrays(1, &gVAO);
-    glGenBuffers(1, &gVBO);
-    glGenBuffers(1, &gEBO);
-
-    glBindVertexArray(gVAO);
-
-    glBindBuffer(GL_ARRAY_BUFFER, gVBO);
-    glBufferData(
-        GL_ARRAY_BUFFER,
-        static_cast<GLsizeiptr>(vertices.size() * sizeof(float)),
-        vertices.data(),
-        GL_STATIC_DRAW
-    );
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gEBO);
-    glBufferData(
-        GL_ELEMENT_ARRAY_BUFFER,
-        static_cast<GLsizeiptr>(indices.size() * sizeof(unsigned int)),
-        indices.data(),
-        GL_STATIC_DRAW
-    );
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), reinterpret_cast<void*>(0));
-    glEnableVertexAttribArray(0);
-
-    glBindVertexArray(0);
+    gSheetMesh = uploadIndexedPositionMesh(vertices, indices);
 }
 
 void updateCanvasSize() {
@@ -333,9 +115,9 @@ void render() {
 
     glUseProgram(gProgram);
     glUniformMatrix4fv(gMVPUniform, 1, GL_FALSE, mvp.m);
-    glBindVertexArray(gVAO);
-    glDrawElements(GL_TRIANGLES, gIndexCount, GL_UNSIGNED_INT, reinterpret_cast<void*>(0));
-    glBindVertexArray(0);
+    glUniform1f(gTimeUniform, static_cast<float>(emscripten_get_now() * 0.001));
+    uploadDirectionalLight(gLightDirectionUniform, gLight);
+    drawGpuMesh(gSheetMesh);
 }
 
 int main() {
@@ -350,8 +132,10 @@ int main() {
     updateCanvasSize();
     glEnable(GL_DEPTH_TEST);
 
-    gProgram = createProgram(vertexShaderSource, fragmentShaderSource);
+    gProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
     gMVPUniform = glGetUniformLocation(gProgram, "uMVP");
+    gTimeUniform = glGetUniformLocation(gProgram, "uTime");
+    gLightDirectionUniform = glGetUniformLocation(gProgram, "uLightDir");
     initSheetMesh();
 
     emscripten_set_mousedown_callback("#canvas", nullptr, EM_TRUE, onMouseDown);
