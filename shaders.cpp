@@ -121,6 +121,29 @@ vec3 spectralMaterialColor(float cosTheta) {
     return clamp(spectrumRgb / max(rgbWeight, vec3(0.001)), 0.0, 1.0);
 }
 
+vec3 thinFilmTint(float layerThicknessNm, float cosTheta) {
+    float layerAmount = clamp(layerThicknessNm / 120.0, 0.0, 1.0);
+    if (layerAmount <= 0.001) {
+        return vec3(1.0);
+    }
+
+    vec3 tint = vec3(0.0);
+    vec3 rgbWeight = vec3(0.0);
+    float layerEta = 1.46;
+    float angleTerm = sqrt(max(1.0 - pow(1.0 - cosTheta, 2.0) * 0.35, 0.05));
+
+    for (int i = 0; i < 6; ++i) {
+        vec3 sampleRgb = wavelengthToRgb(uSpectralWavelengths[i]);
+        float phase = 12.56637 * layerEta * layerThicknessNm * angleTerm / uSpectralWavelengths[i];
+        float interference = 0.5 + 0.5 * cos(phase + 3.14159);
+        tint += sampleRgb * mix(0.72, 1.24, interference);
+        rgbWeight += sampleRgb;
+    }
+
+    vec3 normalizedTint = tint / max(rgbWeight, vec3(0.001));
+    return mix(vec3(1.0), clamp(normalizedTint, 0.65, 1.35), layerAmount);
+}
+
 float luminance(vec3 color) {
     return dot(color, vec3(0.2126, 0.7152, 0.0722));
 }
@@ -330,7 +353,8 @@ void main() {
         return;
     }
 
-    vec3 conductorColor = spectralColor;
+    vec3 filmTint = thinFilmTint(layerThicknessNm, max(dot(normal, viewDir), 0.0));
+    vec3 conductorColor = clamp(spectralColor * filmTint, 0.0, 1.25);
     vec3 materialColor = mix(uMaterialBaseColor, conductorColor, 0.86);
     vec3 diffuseColor = materialColor * (0.020 + diffuse * 0.065);
     vec3 layerTint = mix(vec3(1.0), vec3(0.94, 0.98, 1.04), layerBoost * 0.22);
