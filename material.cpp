@@ -79,7 +79,7 @@ Material createMaterial(MaterialType type) {
                 0.16f,
                 1.24f,
                 0.74f,
-                {1.00f, 0.72f, 1.00f},
+                {1.00f, 0.72f, 0.62f},
                 {
                     0.288f,
                     780.0f,

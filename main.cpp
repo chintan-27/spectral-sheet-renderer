@@ -207,11 +207,11 @@ void initSheetMesh() {
 Vec3 initialClothPosition(int x, int y) {
     const float u = (static_cast<float>(x) + 0.5f) / static_cast<float>(kClothResolution);
     const float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(kClothResolution);
-    const float compressedV = 0.10f + v * 0.20f;
+    const float crinkle = std::sin(u * 31.0f + v * 17.0f) * std::sin(u * 7.0f) * 0.018f;
     return {
-        (u - 0.5f) * 2.0f * 0.72f,
-        0.86f - compressedV * 1.76f,
-        -0.18f + std::sin(compressedV * kPi) * 0.50f
+        (u - 0.5f) * 2.0f,
+        1.14f - v * 2.08f,
+        -0.18f + crinkle
     };
 }
 
@@ -425,23 +425,20 @@ void updateSheetInteractionFromMouse(double clientX, double clientY) {
     const float v = std::clamp(static_cast<float>(clientY / std::max(cssHeight, 1.0)), 0.0f, 1.0f);
     gInteractionX = (u - 0.5f) * 2.0f;
     gInteractionZ = (v - 0.5f) * 2.0f;
-    gInteractionStrength = 1.0f;
+    gInteractionStrength = 2.2f;
 }
 
 EM_BOOL onMouseDown(int, const EmscriptenMouseEvent* event, void*) {
     if (event->button == 0) {
         emscripten_run_script("Module.canvas.focus();");
-        if (event->shiftKey) {
-            gSheetPulling = true;
-            gDragging = false;
-            updateSheetInteractionFromMouse(event->clientX, event->clientY);
-            refreshOverlay();
-            return EM_TRUE;
-        }
-
-        gDragging = true;
+        gSheetPulling = event->shiftKey;
+        gDragging = !gSheetPulling;
         gLastMouseX = event->clientX;
         gLastMouseY = event->clientY;
+        if (gSheetPulling) {
+            updateSheetInteractionFromMouse(event->clientX, event->clientY);
+            refreshOverlay();
+        }
         return EM_TRUE;
     }
     return EM_FALSE;
@@ -454,6 +451,14 @@ EM_BOOL onMouseUp(int, const EmscriptenMouseEvent*, void*) {
 }
 
 EM_BOOL onMouseMove(int, const EmscriptenMouseEvent* event, void*) {
+    if (event->shiftKey && (gDragging || gSheetPulling)) {
+        gSheetPulling = true;
+        gDragging = false;
+        updateSheetInteractionFromMouse(event->clientX, event->clientY);
+        refreshOverlay();
+        return EM_TRUE;
+    }
+
     if (gSheetPulling) {
         updateSheetInteractionFromMouse(event->clientX, event->clientY);
         refreshOverlay();

@@ -461,7 +461,7 @@ layout(location = 1) out vec4 outVelocity;
 
 vec3 restPosition(vec2 uv) {
     float v = uv.y;
-    return vec3((uv.x - 0.5) * 2.0, 0.86 - v * 1.76, -0.18);
+    return vec3((uv.x - 0.5) * 2.0, 1.14 - v * 2.08, -0.18);
 }
 
 float hash21(vec2 p) {
@@ -496,42 +496,39 @@ void main() {
     }
 
     float dx = 2.0 / max(uResolution.x - 1.0, 1.0);
-    float dy = 1.76 / max(uResolution.y - 1.0, 1.0);
+    float dy = 2.08 / max(uResolution.y - 1.0, 1.0);
     float diagonal = length(vec2(dx, dy));
     float motion = clamp(uMaterialEffects.z, 0.0, 1.0);
     float dt = min(uDeltaTime, 0.033);
 
-    vec3 force = vec3(0.0, -2.30, 0.0);
-    addSpring(force, position, coord, ivec2(1, 0), dx, 95.0);
-    addSpring(force, position, coord, ivec2(-1, 0), dx, 95.0);
-    addSpring(force, position, coord, ivec2(0, 1), dy, 95.0);
-    addSpring(force, position, coord, ivec2(0, -1), dy, 95.0);
-    addSpring(force, position, coord, ivec2(1, 1), diagonal, 32.0);
-    addSpring(force, position, coord, ivec2(-1, 1), diagonal, 32.0);
-    addSpring(force, position, coord, ivec2(1, -1), diagonal, 32.0);
-    addSpring(force, position, coord, ivec2(-1, -1), diagonal, 32.0);
-    addSpring(force, position, coord, ivec2(2, 0), dx * 2.0, 18.0);
-    addSpring(force, position, coord, ivec2(0, 2), dy * 2.0, 18.0);
-    addSpring(force, position, coord, ivec2(-2, 0), dx * 2.0, 18.0);
-    addSpring(force, position, coord, ivec2(0, -2), dy * 2.0, 18.0);
+    vec3 force = vec3(0.0, -1.45, 0.0);
+    addSpring(force, position, coord, ivec2(1, 0), dx, 145.0);
+    addSpring(force, position, coord, ivec2(-1, 0), dx, 145.0);
+    addSpring(force, position, coord, ivec2(0, 1), dy, 145.0);
+    addSpring(force, position, coord, ivec2(0, -1), dy, 145.0);
+    addSpring(force, position, coord, ivec2(1, 1), diagonal, 70.0);
+    addSpring(force, position, coord, ivec2(-1, 1), diagonal, 70.0);
+    addSpring(force, position, coord, ivec2(1, -1), diagonal, 70.0);
+    addSpring(force, position, coord, ivec2(-1, -1), diagonal, 70.0);
+    addSpring(force, position, coord, ivec2(2, 0), dx * 2.0, 58.0);
+    addSpring(force, position, coord, ivec2(0, 2), dy * 2.0, 58.0);
+    addSpring(force, position, coord, ivec2(-2, 0), dx * 2.0, 58.0);
+    addSpring(force, position, coord, ivec2(0, -2), dy * 2.0, 58.0);
 
-    force += (rest - position) * mix(0.28, 0.08, motion);
-
-    float n = hash21(vec2(coord) * 0.37 + vec2(uTime * 0.31, uTime * 0.17));
-    float wind = (sin(uTime * 1.8 + uv.x * 8.0 + uv.y * 4.0) + n - 0.5) * motion;
-    force += vec3(0.10 * wind, 0.05 * wind, 0.55 * wind);
+    force += (rest - position) * mix(0.95, 0.55, motion);
 
     vec2 pointerUv = vec2(clamp(uInteraction.x * 0.5 + 0.5, 0.0, 1.0), clamp(uInteraction.y * 0.5 + 0.5, 0.0, 1.0));
     float pointerDistance = length(uv - pointerUv);
-    float pointerFalloff = exp(-(pointerDistance * pointerDistance) / 0.018);
-    force += vec3(0.0, 1.4, 4.8) * pointerFalloff * uInteraction.z;
+    float pointerFalloff = exp(-(pointerDistance * pointerDistance) / 0.055);
+    vec2 dragDir = normalize((uv - pointerUv) + vec2(0.001, 0.001));
+    force += vec3(dragDir.x * 1.15, -dragDir.y * 1.10, 7.5) * pointerFalloff * uInteraction.z;
 
     velocity += force * dt;
-    velocity *= mix(0.992, 0.978, motion);
+    velocity *= mix(0.955, 0.935, motion);
     position += velocity * dt;
 
-    if (position.y < -1.18) {
-        position.y = -1.18;
+    if (position.y < -1.10) {
+        position.y = -1.10;
         velocity.y = abs(velocity.y) * 0.16;
         velocity.xz *= 0.72;
     }
