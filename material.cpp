@@ -37,6 +37,7 @@ Material createMaterial(MaterialType type) {
                 0.10f,
                 1.55f,
                 0.88f,
+                {0.18f, 0.04f, 0.70f},
                 {
                     0.286f,
                     900.0f,
@@ -57,6 +58,7 @@ Material createMaterial(MaterialType type) {
                 0.64f,
                 0.32f,
                 0.18f,
+                {0.05f, 0.80f, 0.95f},
                 {
                     0.35f,
                     1400.0f,
@@ -77,6 +79,7 @@ Material createMaterial(MaterialType type) {
                 0.16f,
                 1.24f,
                 0.74f,
+                {1.00f, 0.72f, 1.00f},
                 {
                     0.288f,
                     780.0f,
@@ -97,6 +100,7 @@ Material createMaterial(MaterialType type) {
                 0.075f,
                 1.55f,
                 0.88f,
+                {0.03f, 0.02f, 0.45f},
                 {
                     0.256f,
                     820.0f,
@@ -117,6 +121,7 @@ Material createMaterial(MaterialType type) {
                 0.06f,
                 1.62f,
                 0.91f,
+                {0.02f, 0.02f, 0.42f},
                 {
                     0.288f,
                     860.0f,
@@ -137,6 +142,7 @@ Material createMaterial(MaterialType type) {
                 0.04f,
                 1.80f,
                 0.95f,
+                {0.04f, 0.02f, 0.45f},
                 {
                     0.289f,
                     760.0f,
@@ -165,7 +171,7 @@ const char* materialName(MaterialType type) {
         case MaterialType::CoatedPlastic:
             return "Coated Plastic";
         case MaterialType::CoatedMetal:
-            return "Coated Metal";
+            return "Reflective Rainbow Sheet";
         case MaterialType::Copper:
             return "Copper";
         case MaterialType::Gold:
@@ -182,6 +188,7 @@ void uploadMaterial(
     GLint roughnessUniform,
     GLint specularStrengthUniform,
     GLint reflectivityUniform,
+    GLint effectStrengthsUniform,
     GLint structureUniform,
     GLint spectralWavelengthsUniform,
     GLint opticalEtaUniform,
@@ -192,6 +199,12 @@ void uploadMaterial(
     glUniform1f(roughnessUniform, material.roughness);
     glUniform1f(specularStrengthUniform, material.specularStrength);
     glUniform1f(reflectivityUniform, material.reflectivity);
+    glUniform3f(
+        effectStrengthsUniform,
+        material.effectStrengths.x,
+        material.effectStrengths.y,
+        material.effectStrengths.z
+    );
     glUniform4f(
         structureUniform,
         material.structure.grooveSpacingNm,

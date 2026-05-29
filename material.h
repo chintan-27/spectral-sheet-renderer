@@ -35,6 +35,7 @@ struct Material {
     float roughness;
     float specularStrength;
     float reflectivity;
+    Vec3 effectStrengths;
     MaterialStructure structure;
     OpticalConstants optical;
 };
@@ -47,6 +48,7 @@ void uploadMaterial(
     GLint roughnessUniform,
     GLint specularStrengthUniform,
     GLint reflectivityUniform,
+    GLint effectStrengthsUniform,
     GLint structureUniform,
     GLint spectralWavelengthsUniform,
     GLint opticalEtaUniform,

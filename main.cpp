@@ -20,6 +20,9 @@ EM_JS(void, updateOverlay, (
     int debugView,
     float roughness,
     float reflectivity,
+    float diffractionStrength,
+    float filmStrength,
+    float motionStrength,
     float grooveSpacingNm,
     float grooveDepthNm,
     float layerThicknessNm,
@@ -54,37 +57,48 @@ EM_JS(void, updateOverlay, (
     ];
     const debugName = debugNames[debugView] || 'Unknown';
 
+    const target = materialName === 'Reflective Rainbow Sheet' ? 'Goal rainbow sheet' : 'Ordinary material';
+    const meter = function(label, value) {
+        const pct = Math.max(0, Math.min(100, value * 100));
+        return '<div class="meter"><span>' + label + '</span><b>' + value.toFixed(2) + '</b><i><em style="width:' + pct + '%"></em></i></div>';
+    };
+
     overlay.innerHTML =
-        '<div class="title">Material Debug</div>' +
-        '<div>Material: ' + materialName + '</div>' +
-        '<div>Light: ' + lightName + '</div>' +
-        '<div>View: ' + debugName + '</div>' +
-        '<br>' +
-        '<div>Roughness: ' + roughness.toFixed(3) + '</div>' +
-        '<div>Reflectivity: ' + reflectivity.toFixed(3) + '</div>' +
-        '<div>Groove spacing: ' + grooveSpacingNm.toFixed(1) + ' nm</div>' +
-        '<div>Groove depth: ' + grooveDepthNm.toFixed(1) + ' nm</div>' +
-        '<div>Layer thickness: ' + layerThicknessNm.toFixed(1) + ' nm</div>' +
-        '<div>Disorder: ' + disorderStrength.toFixed(3) + '</div>' +
-        '<div>Sheet pull: ' + interactionStrength.toFixed(3) + '</div>' +
-        '<div>Spectral sample: #' + spectralIndex + ' / ' + spectralWavelengthNm.toFixed(1) + ' nm</div>' +
-        '<br>' +
-        '<div class="muted">Materials: 1 Al, 2 plastic, 3 coated, 4 Cu, 5 Au, 6 Ag</div>' +
-        '<div class="muted">Lights: L cycles presets. Motion: Shift + drag pulls the sheet.</div>' +
-        '<div class="muted">Views: 0 shaded, 7 spacing, 8 depth, 9 layer, Q disorder, W height, E normals, R env, T reflection, Y spectral, U n/k, I wavelength, O angle, P frame, D diffraction</div>';
+        '<div class="panel-head"><div><div class="title">Spectral Sheet</div><div class="subtitle">' + target + '</div></div><div class="badge">' + debugName + '</div></div>' +
+        '<div class="grid">' +
+        '<div><span>Material</span><strong>' + materialName + '</strong></div>' +
+        '<div><span>Light</span><strong>' + lightName + '</strong></div>' +
+        '<div><span>Groove</span><strong>' + grooveSpacingNm.toFixed(0) + ' nm</strong></div>' +
+        '<div><span>Layer</span><strong>' + layerThicknessNm.toFixed(0) + ' nm</strong></div>' +
+        '</div>' +
+        meter('Reflectivity', reflectivity) +
+        meter('Roughness', roughness) +
+        meter('Diffraction', diffractionStrength) +
+        meter('Thin film', filmStrength) +
+        meter('Motion', motionStrength) +
+        '<div class="readout">Depth ' + grooveDepthNm.toFixed(1) + ' nm | Disorder ' + disorderStrength.toFixed(2) + ' | Pull ' + interactionStrength.toFixed(2) + ' | Sample #' + spectralIndex + ' ' + spectralWavelengthNm.toFixed(0) + ' nm</div>' +
+        '<div class="help">1 Al, 2 plastic, 3 rainbow sheet, 4 Cu, 5 Au, 6 Ag | L light | F drop/open | Shift+drag pull | D diffraction | R reflection</div>';
 });
 
 GLuint gProgram = 0;
+GLuint gClothSimProgram = 0;
+GLuint gClothSimVao = 0;
+GLuint gClothFramebuffer = 0;
+GLuint gClothPositionTextures[2] = {0, 0};
+GLuint gClothVelocityTextures[2] = {0, 0};
 GpuMesh gSheetMesh = {};
 GLint gMVPUniform = -1;
 GLint gTimeUniform = -1;
 GLint gInteractionUniform = -1;
+GLint gClothPositionRenderUniform = -1;
+GLint gClothResolutionRenderUniform = -1;
 GLint gLightDirectionUniform = -1;
 GLint gCameraPositionUniform = -1;
 GLint gMaterialBaseColorUniform = -1;
 GLint gMaterialRoughnessUniform = -1;
 GLint gMaterialSpecularStrengthUniform = -1;
 GLint gMaterialReflectivityUniform = -1;
+GLint gMaterialEffectsUniform = -1;
 GLint gMaterialStructureUniform = -1;
 GLint gSpectralWavelengthsUniform = -1;
 GLint gOpticalEtaUniform = -1;
@@ -96,9 +110,17 @@ GLint gEnvironmentSoftboxColorUniform = -1;
 GLint gEnvironmentControlsUniform = -1;
 GLint gDebugViewUniform = -1;
 GLint gSpectralDebugIndexUniform = -1;
+GLint gSimPositionTexUniform = -1;
+GLint gSimVelocityTexUniform = -1;
+GLint gSimResolutionUniform = -1;
+GLint gSimDeltaTimeUniform = -1;
+GLint gSimTimeUniform = -1;
+GLint gSimInteractionUniform = -1;
+GLint gSimMaterialEffectsUniform = -1;
 
 int gCanvasWidth = 800;
 int gCanvasHeight = 600;
+constexpr int kClothResolution = 64;
 
 bool gDragging = false;
 bool gSheetPulling = false;
@@ -111,12 +133,15 @@ float gInteractionX = 0.0f;
 float gInteractionZ = 0.0f;
 float gInteractionStrength = 0.0f;
 float gInteractionRadius = 0.38f;
+float gMotionSeed = 0.0f;
+double gLastFrameTime = 0.0;
 DirectionalLight gLight = createDefaultDirectionalLight();
 Material gMaterial = createDefaultMetalMaterial();
 Environment gEnvironment = createDefaultEnvironment();
 int gDebugView = 0;
 int gSpectralDebugIndex = 0;
 int gLightPresetIndex = 0;
+int gClothReadIndex = 0;
 
 const float kPi = 3.14159265358979323846f;
 
@@ -127,6 +152,9 @@ void refreshOverlay() {
         gDebugView,
         gMaterial.roughness,
         gMaterial.reflectivity,
+        gMaterial.effectStrengths.x,
+        gMaterial.effectStrengths.y,
+        gMaterial.effectStrengths.z,
         gMaterial.structure.grooveSpacingNm,
         gMaterial.structure.grooveDepthNm,
         gMaterial.structure.layerThicknessNm,
@@ -140,8 +168,118 @@ void refreshOverlay() {
 void initSheetMesh() {
     std::vector<float> vertices;
     std::vector<unsigned int> indices;
-    generateSheetMesh(48, 48, 2.0f, 2.0f, vertices, indices);
+    generateSheetMesh(kClothResolution - 1, kClothResolution - 1, 2.0f, 2.0f, vertices, indices);
     gSheetMesh = uploadIndexedPositionMesh(vertices, indices);
+}
+
+Vec3 initialClothPosition(int x, int y) {
+    const float u = (static_cast<float>(x) + 0.5f) / static_cast<float>(kClothResolution);
+    const float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(kClothResolution);
+    const float compressedV = 0.10f + v * 0.20f;
+    return {
+        (u - 0.5f) * 2.0f * 0.72f,
+        0.86f - compressedV * 1.76f,
+        -0.18f + std::sin(compressedV * kPi) * 0.50f
+    };
+}
+
+GLuint createClothTexture(const std::vector<float>& data) {
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(
+        GL_TEXTURE_2D,
+        0,
+        GL_RGBA32F,
+        kClothResolution,
+        kClothResolution,
+        0,
+        GL_RGBA,
+        GL_FLOAT,
+        data.data()
+    );
+    return texture;
+}
+
+void fillClothState(std::vector<float>& positions, std::vector<float>& velocities) {
+    positions.assign(kClothResolution * kClothResolution * 4, 0.0f);
+    velocities.assign(kClothResolution * kClothResolution * 4, 0.0f);
+
+    for (int y = 0; y < kClothResolution; ++y) {
+        for (int x = 0; x < kClothResolution; ++x) {
+            const int index = (y * kClothResolution + x) * 4;
+            const Vec3 position = initialClothPosition(x, y);
+            positions[index + 0] = position.x;
+            positions[index + 1] = position.y;
+            positions[index + 2] = position.z;
+            positions[index + 3] = 1.0f;
+        }
+    }
+}
+
+void resetClothSimulation() {
+    std::vector<float> positions;
+    std::vector<float> velocities;
+    fillClothState(positions, velocities);
+
+    for (int i = 0; i < 2; ++i) {
+        glBindTexture(GL_TEXTURE_2D, gClothPositionTextures[i]);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kClothResolution, kClothResolution, GL_RGBA, GL_FLOAT, positions.data());
+        glBindTexture(GL_TEXTURE_2D, gClothVelocityTextures[i]);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kClothResolution, kClothResolution, GL_RGBA, GL_FLOAT, velocities.data());
+    }
+
+    gMotionSeed = static_cast<float>(std::fmod(emscripten_get_now() * 0.001, 1000.0));
+}
+
+void initClothSimulation() {
+    std::vector<float> positions;
+    std::vector<float> velocities;
+    fillClothState(positions, velocities);
+
+    for (int i = 0; i < 2; ++i) {
+        gClothPositionTextures[i] = createClothTexture(positions);
+        gClothVelocityTextures[i] = createClothTexture(velocities);
+    }
+
+    glGenFramebuffers(1, &gClothFramebuffer);
+    glGenVertexArrays(1, &gClothSimVao);
+    gMotionSeed = static_cast<float>(std::fmod(emscripten_get_now() * 0.001, 1000.0));
+}
+
+void simulateCloth(float dt, float timeSeconds) {
+    const int writeIndex = 1 - gClothReadIndex;
+    glUseProgram(gClothSimProgram);
+    glViewport(0, 0, kClothResolution, kClothResolution);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, gClothFramebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gClothPositionTextures[writeIndex], 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, gClothVelocityTextures[writeIndex], 0);
+    const GLenum attachments[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+    glDrawBuffers(2, attachments);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, gClothPositionTextures[gClothReadIndex]);
+    glUniform1i(gSimPositionTexUniform, 0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, gClothVelocityTextures[gClothReadIndex]);
+    glUniform1i(gSimVelocityTexUniform, 1);
+
+    glUniform2f(gSimResolutionUniform, static_cast<float>(kClothResolution), static_cast<float>(kClothResolution));
+    glUniform1f(gSimDeltaTimeUniform, dt);
+    glUniform1f(gSimTimeUniform, timeSeconds + gMotionSeed);
+    glUniform4f(gSimInteractionUniform, gInteractionX, gInteractionZ, gInteractionStrength, gInteractionRadius);
+    glUniform3f(gSimMaterialEffectsUniform, gMaterial.effectStrengths.x, gMaterial.effectStrengths.y, gMaterial.effectStrengths.z);
+
+    glBindVertexArray(gClothSimVao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    gClothReadIndex = writeIndex;
 }
 
 void setMaterial(MaterialType type) {
@@ -415,11 +553,32 @@ EM_BOOL onKeyDown(int, const EmscriptenKeyboardEvent* event, void*) {
         return EM_TRUE;
     }
 
+    if (key == 'f' || key == 'F') {
+        resetClothSimulation();
+        refreshOverlay();
+        return EM_TRUE;
+    }
+
     return EM_FALSE;
 }
 
 void render() {
     updateCanvasSize();
+    const double nowSeconds = emscripten_get_now() * 0.001;
+    float dt = 1.0f / 60.0f;
+    if (gLastFrameTime > 0.0) {
+        dt = std::clamp(static_cast<float>(nowSeconds - gLastFrameTime), 0.0f, 0.033f);
+    }
+    gLastFrameTime = nowSeconds;
+
+    if (!gSheetPulling) {
+        gInteractionStrength *= 0.965f;
+        if (gInteractionStrength < 0.001f) {
+            gInteractionStrength = 0.0f;
+        }
+    }
+    simulateCloth(dt, static_cast<float>(nowSeconds));
+    glViewport(0, 0, gCanvasWidth, gCanvasHeight);
 
     glClearColor(0.06f, 0.075f, 0.085f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -433,14 +592,11 @@ void render() {
 
     glUseProgram(gProgram);
     glUniformMatrix4fv(gMVPUniform, 1, GL_FALSE, mvp.m);
-    glUniform1f(gTimeUniform, static_cast<float>(emscripten_get_now() * 0.001));
-    if (!gSheetPulling) {
-        gInteractionStrength *= 0.965f;
-        if (gInteractionStrength < 0.001f) {
-            gInteractionStrength = 0.0f;
-        }
-    }
-    glUniform4f(gInteractionUniform, gInteractionX, gInteractionZ, gInteractionStrength, gInteractionRadius);
+    glUniform1f(gTimeUniform, static_cast<float>(nowSeconds));
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, gClothPositionTextures[gClothReadIndex]);
+    glUniform1i(gClothPositionRenderUniform, 0);
+    glUniform2f(gClothResolutionRenderUniform, static_cast<float>(kClothResolution), static_cast<float>(kClothResolution));
     glUniform3f(gCameraPositionUniform, cameraPos.x, cameraPos.y, cameraPos.z);
     glUniform1i(gDebugViewUniform, gDebugView);
     glUniform1i(gSpectralDebugIndexUniform, gSpectralDebugIndex);
@@ -458,6 +614,7 @@ void render() {
         gMaterialRoughnessUniform,
         gMaterialSpecularStrengthUniform,
         gMaterialReflectivityUniform,
+        gMaterialEffectsUniform,
         gMaterialStructureUniform,
         gSpectralWavelengthsUniform,
         gOpticalEtaUniform,
@@ -475,20 +632,25 @@ int main() {
     attr.depth = EM_TRUE;
     EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context = emscripten_webgl_create_context("#canvas", &attr);
     emscripten_webgl_make_context_current(context);
+    emscripten_webgl_enable_extension(context, "EXT_color_buffer_float");
 
     updateCanvasSize();
     glEnable(GL_DEPTH_TEST);
 
     gProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
+    gClothSimProgram = createShaderProgram(clothSimVertexShaderSource, clothSimFragmentShaderSource);
     gMVPUniform = glGetUniformLocation(gProgram, "uMVP");
     gTimeUniform = glGetUniformLocation(gProgram, "uTime");
     gInteractionUniform = glGetUniformLocation(gProgram, "uInteraction");
+    gClothPositionRenderUniform = glGetUniformLocation(gProgram, "uClothPositionTex");
+    gClothResolutionRenderUniform = glGetUniformLocation(gProgram, "uClothResolution");
     gLightDirectionUniform = glGetUniformLocation(gProgram, "uLightDir");
     gCameraPositionUniform = glGetUniformLocation(gProgram, "uCameraPos");
     gMaterialBaseColorUniform = glGetUniformLocation(gProgram, "uMaterialBaseColor");
     gMaterialRoughnessUniform = glGetUniformLocation(gProgram, "uMaterialRoughness");
     gMaterialSpecularStrengthUniform = glGetUniformLocation(gProgram, "uMaterialSpecularStrength");
     gMaterialReflectivityUniform = glGetUniformLocation(gProgram, "uMaterialReflectivity");
+    gMaterialEffectsUniform = glGetUniformLocation(gProgram, "uMaterialEffects");
     gMaterialStructureUniform = glGetUniformLocation(gProgram, "uMaterialStructure");
     gSpectralWavelengthsUniform = glGetUniformLocation(gProgram, "uSpectralWavelengths[0]");
     gOpticalEtaUniform = glGetUniformLocation(gProgram, "uOpticalEta[0]");
@@ -500,7 +662,15 @@ int main() {
     gEnvironmentControlsUniform = glGetUniformLocation(gProgram, "uEnvControls");
     gDebugViewUniform = glGetUniformLocation(gProgram, "uDebugView");
     gSpectralDebugIndexUniform = glGetUniformLocation(gProgram, "uSpectralDebugIndex");
+    gSimPositionTexUniform = glGetUniformLocation(gClothSimProgram, "uPositionTex");
+    gSimVelocityTexUniform = glGetUniformLocation(gClothSimProgram, "uVelocityTex");
+    gSimResolutionUniform = glGetUniformLocation(gClothSimProgram, "uResolution");
+    gSimDeltaTimeUniform = glGetUniformLocation(gClothSimProgram, "uDeltaTime");
+    gSimTimeUniform = glGetUniformLocation(gClothSimProgram, "uTime");
+    gSimInteractionUniform = glGetUniformLocation(gClothSimProgram, "uInteraction");
+    gSimMaterialEffectsUniform = glGetUniformLocation(gClothSimProgram, "uMaterialEffects");
     initSheetMesh();
+    initClothSimulation();
 
     emscripten_set_mousedown_callback("#canvas", nullptr, EM_TRUE, onMouseDown);
     emscripten_set_mouseup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_TRUE, onMouseUp);
@@ -509,7 +679,7 @@ int main() {
     emscripten_set_keydown_callback("#canvas", nullptr, EM_TRUE, onKeyDown);
     emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, nullptr, EM_TRUE, onKeyDown);
     emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, EM_TRUE, onKeyDown);
-    setMaterial(MaterialType::AluminumFoil);
+    setMaterial(MaterialType::CoatedMetal);
     setLightPreset(0);
 
     emscripten_set_main_loop(render, 0, 1);

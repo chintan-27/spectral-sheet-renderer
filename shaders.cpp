@@ -4,8 +4,8 @@ const char* vertexShaderSource = R"(#version 300 es
 layout(location = 0) in vec3 aPos;
 
 uniform mat4 uMVP;
-uniform float uTime;
-uniform vec4 uInteraction;
+uniform sampler2D uClothPositionTex;
+uniform vec2 uClothResolution;
 
 out vec3 vWorldPos;
 out vec3 vNormal;
@@ -13,64 +13,19 @@ out vec3 vTangent;
 out vec3 vBitangent;
 out vec3 vGrooveDir;
 
-float hash21(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-}
-
-float valueNoise(vec2 p) {
-    vec2 cell = floor(p);
-    vec2 local = fract(p);
-    vec2 blend = local * local * (3.0 - 2.0 * local);
-
-    float a = hash21(cell);
-    float b = hash21(cell + vec2(1.0, 0.0));
-    float c = hash21(cell + vec2(0.0, 1.0));
-    float d = hash21(cell + vec2(1.0, 1.0));
-
-    return mix(mix(a, b, blend.x), mix(c, d, blend.x), blend.y);
-}
-
-float fbm(vec2 p) {
-    float total = 0.0;
-    float amplitude = 0.5;
-
-    for (int i = 0; i < 4; ++i) {
-        total += valueNoise(p) * amplitude;
-        p = p * 2.03 + vec2(17.7, 9.2);
-        amplitude *= 0.5;
-    }
-
-    return total;
-}
-
-float sheetHeight(vec2 p) {
-    float primaryWave = sin(p.x * 5.4 + uTime * 1.05) * 0.065;
-    float crossWave = sin((p.x * 0.65 + p.y) * 4.2 - uTime * 0.72) * 0.040;
-    float broadFolds = (fbm(p * 1.35 + vec2(uTime * 0.035, -uTime * 0.020)) - 0.5) * 0.110;
-    float fineWrinkles = (fbm(p * 8.0 + vec2(uTime * 0.10, uTime * 0.06)) - 0.5) * 0.022;
-    vec2 pointerDelta = p - uInteraction.xy;
-    float radius = max(uInteraction.w, 0.05);
-    float pointerFalloff = exp(-dot(pointerDelta, pointerDelta) / (radius * radius));
-    float pointerPull = pointerFalloff * uInteraction.z * (0.16 + sin(uTime * 7.0) * 0.020);
-
-    return primaryWave + crossWave + broadFolds + fineWrinkles + pointerPull;
+vec3 clothPosition(vec2 uv) {
+    vec2 halfTexel = 0.5 / uClothResolution;
+    return texture(uClothPositionTex, clamp(uv, halfTexel, 1.0 - halfTexel)).xyz;
 }
 
 void main() {
-    float height = sheetHeight(aPos.xz);
-    float sampleStep = 0.025;
-    float heightLeft = sheetHeight(aPos.xz - vec2(sampleStep, 0.0));
-    float heightRight = sheetHeight(aPos.xz + vec2(sampleStep, 0.0));
-    float heightBack = sheetHeight(aPos.xz - vec2(0.0, sampleStep));
-    float heightForward = sheetHeight(aPos.xz + vec2(0.0, sampleStep));
-    float dHeightDx = (heightRight - heightLeft) / (sampleStep * 2.0);
-    float dHeightDz = (heightForward - heightBack) / (sampleStep * 2.0);
-
-    vec3 tangent = normalize(vec3(1.0, dHeightDx, 0.0));
-    vec3 bitangent = normalize(vec3(0.0, dHeightDz, 1.0));
+    vec2 uv = aPos.xz * 0.5 + 0.5;
+    vec2 texel = 1.0 / uClothResolution;
+    vec3 displacedPos = clothPosition(uv);
+    vec3 tangent = normalize(clothPosition(uv + vec2(texel.x, 0.0)) - clothPosition(uv - vec2(texel.x, 0.0)));
+    vec3 bitangent = normalize(clothPosition(uv + vec2(0.0, texel.y)) - clothPosition(uv - vec2(0.0, texel.y)));
     vec3 normal = normalize(cross(bitangent, tangent));
 
-    vec3 displacedPos = vec3(aPos.x, height, aPos.z);
     vWorldPos = displacedPos;
     vNormal = normal;
     vTangent = tangent;
@@ -94,6 +49,7 @@ uniform vec3 uMaterialBaseColor;
 uniform float uMaterialRoughness;
 uniform float uMaterialSpecularStrength;
 uniform float uMaterialReflectivity;
+uniform vec3 uMaterialEffects;
 uniform vec4 uMaterialStructure;
 uniform float uSpectralWavelengths[6];
 uniform float uOpticalEta[6];
@@ -433,25 +389,135 @@ void main() {
         disorderStrength
     );
     rainbowColor *= defectMask;
+    rainbowColor *= clamp(uMaterialEffects.x, 0.0, 1.0);
 
     if (uDebugView == 14) {
         FragColor = vec4(rainbowColor, 1.0);
         return;
     }
 
-    vec3 filmTint = thinFilmTint(layerThicknessNm, max(dot(normal, viewDir), 0.0));
+    vec3 filmTint = mix(vec3(1.0), thinFilmTint(layerThicknessNm, max(dot(normal, viewDir), 0.0)), clamp(uMaterialEffects.y, 0.0, 1.0));
     vec3 conductorColor = clamp(spectralColor * filmTint, 0.0, 1.25);
     vec3 materialColor = mix(uMaterialBaseColor, conductorColor, 0.86);
     vec3 diffuseColor = materialColor * (0.020 + diffuse * 0.065);
     vec3 layerTint = mix(vec3(1.0), vec3(0.94, 0.98, 1.04), layerBoost * 0.22);
     vec3 reflectionColor = proceduralEnvironment(normalize(reflectionDir)) * conductorColor * layerTint;
     vec3 specularColor = conductorColor * specular;
-    float rainbowStrength = clamp(0.18 + grooveDepthNm / 110.0, 0.0, 0.72);
+    float rainbowStrength = clamp(0.18 + grooveDepthNm / 110.0, 0.0, 0.72) * clamp(uMaterialEffects.x, 0.0, 1.0);
     float reflectionBias = clamp(reflectivity * 0.85 + fresnel * 0.25, 0.0, 1.0);
     vec3 metalColor = mix(diffuseColor, reflectionColor, reflectionBias) + specularColor;
     vec3 rainbowReflection = rainbowColor * conductorColor * (0.55 + reflectionBias * 0.65);
     vec3 litColor = clamp(metalColor + rainbowReflection * rainbowStrength, 0.0, 1.6);
     vec3 gridColor = litColor * 0.62;
     FragColor = vec4(mix(litColor, gridColor, line * 0.14), 1.0);
+}
+)";
+
+const char* clothSimVertexShaderSource = R"(#version 300 es
+precision highp float;
+
+void main() {
+    vec2 positions[3] = vec2[3](
+        vec2(-1.0, -1.0),
+        vec2(3.0, -1.0),
+        vec2(-1.0, 3.0)
+    );
+    gl_Position = vec4(positions[gl_VertexID], 0.0, 1.0);
+}
+)";
+
+const char* clothSimFragmentShaderSource = R"(#version 300 es
+precision highp float;
+
+uniform sampler2D uPositionTex;
+uniform sampler2D uVelocityTex;
+uniform vec2 uResolution;
+uniform float uDeltaTime;
+uniform float uTime;
+uniform vec4 uInteraction;
+uniform vec3 uMaterialEffects;
+
+layout(location = 0) out vec4 outPosition;
+layout(location = 1) out vec4 outVelocity;
+
+vec3 restPosition(vec2 uv) {
+    float v = uv.y;
+    return vec3((uv.x - 0.5) * 2.0, 0.86 - v * 1.76, -0.18);
+}
+
+float hash21(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+vec3 fetchPosition(ivec2 coord) {
+    ivec2 clampedCoord = clamp(coord, ivec2(0), ivec2(uResolution) - ivec2(1));
+    return texelFetch(uPositionTex, clampedCoord, 0).xyz;
+}
+
+void addSpring(inout vec3 force, vec3 position, ivec2 coord, ivec2 offset, float restLength, float stiffness) {
+    vec3 otherPosition = fetchPosition(coord + offset);
+    vec3 delta = otherPosition - position;
+    float lengthNow = length(delta);
+    if (lengthNow > 0.0001) {
+        force += normalize(delta) * (lengthNow - restLength) * stiffness;
+    }
+}
+
+void main() {
+    ivec2 coord = ivec2(gl_FragCoord.xy);
+    vec2 uv = (vec2(coord) + 0.5) / uResolution;
+    vec3 position = texelFetch(uPositionTex, coord, 0).xyz;
+    vec3 velocity = texelFetch(uVelocityTex, coord, 0).xyz;
+    vec3 rest = restPosition(uv);
+
+    if (coord.y == 0) {
+        outPosition = vec4(rest, 1.0);
+        outVelocity = vec4(0.0);
+        return;
+    }
+
+    float dx = 2.0 / max(uResolution.x - 1.0, 1.0);
+    float dy = 1.76 / max(uResolution.y - 1.0, 1.0);
+    float diagonal = length(vec2(dx, dy));
+    float motion = clamp(uMaterialEffects.z, 0.0, 1.0);
+    float dt = min(uDeltaTime, 0.033);
+
+    vec3 force = vec3(0.0, -2.30, 0.0);
+    addSpring(force, position, coord, ivec2(1, 0), dx, 95.0);
+    addSpring(force, position, coord, ivec2(-1, 0), dx, 95.0);
+    addSpring(force, position, coord, ivec2(0, 1), dy, 95.0);
+    addSpring(force, position, coord, ivec2(0, -1), dy, 95.0);
+    addSpring(force, position, coord, ivec2(1, 1), diagonal, 32.0);
+    addSpring(force, position, coord, ivec2(-1, 1), diagonal, 32.0);
+    addSpring(force, position, coord, ivec2(1, -1), diagonal, 32.0);
+    addSpring(force, position, coord, ivec2(-1, -1), diagonal, 32.0);
+    addSpring(force, position, coord, ivec2(2, 0), dx * 2.0, 18.0);
+    addSpring(force, position, coord, ivec2(0, 2), dy * 2.0, 18.0);
+    addSpring(force, position, coord, ivec2(-2, 0), dx * 2.0, 18.0);
+    addSpring(force, position, coord, ivec2(0, -2), dy * 2.0, 18.0);
+
+    force += (rest - position) * mix(0.28, 0.08, motion);
+
+    float n = hash21(vec2(coord) * 0.37 + vec2(uTime * 0.31, uTime * 0.17));
+    float wind = (sin(uTime * 1.8 + uv.x * 8.0 + uv.y * 4.0) + n - 0.5) * motion;
+    force += vec3(0.10 * wind, 0.05 * wind, 0.55 * wind);
+
+    vec2 pointerUv = vec2(clamp(uInteraction.x * 0.5 + 0.5, 0.0, 1.0), clamp(uInteraction.y * 0.5 + 0.5, 0.0, 1.0));
+    float pointerDistance = length(uv - pointerUv);
+    float pointerFalloff = exp(-(pointerDistance * pointerDistance) / 0.018);
+    force += vec3(0.0, 1.4, 4.8) * pointerFalloff * uInteraction.z;
+
+    velocity += force * dt;
+    velocity *= mix(0.992, 0.978, motion);
+    position += velocity * dt;
+
+    if (position.y < -1.18) {
+        position.y = -1.18;
+        velocity.y = abs(velocity.y) * 0.16;
+        velocity.xz *= 0.72;
+    }
+
+    outPosition = vec4(position, 1.0);
+    outVelocity = vec4(velocity, 0.0);
 }
 )";
