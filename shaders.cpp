@@ -59,6 +59,7 @@ uniform vec3 uEnvHighColor;
 uniform vec3 uEnvHorizonColor;
 uniform vec3 uEnvSoftboxColor;
 uniform vec4 uEnvControls;
+uniform vec4 uQualityControls;
 uniform int uDebugView;
 uniform int uSpectralDebugIndex;
 out vec4 FragColor;
@@ -227,9 +228,15 @@ vec3 diffractionColor(
     for (int i = 0; i < 6; ++i) {
         float wavelength = uSpectralWavelengths[i];
         vec3 sampleRgb = wavelengthToRgb(wavelength);
+        if (uQualityControls.y > 1.5 && (i == 1 || i == 3 || i == 5)) {
+            continue;
+        }
 
         for (int order = -2; order <= 2; ++order) {
             if (order == 0) {
+                continue;
+            }
+            if (abs(order) > int(uQualityControls.x)) {
                 continue;
             }
 

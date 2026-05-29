@@ -17,6 +17,7 @@
 EM_JS(void, updateOverlay, (
     const char* materialNamePtr,
     const char* lightNamePtr,
+    const char* qualityNamePtr,
     int debugView,
     float roughness,
     float reflectivity,
@@ -38,6 +39,7 @@ EM_JS(void, updateOverlay, (
 
     const materialName = UTF8ToString(materialNamePtr);
     const lightName = UTF8ToString(lightNamePtr);
+    const qualityName = UTF8ToString(qualityNamePtr);
     const debugNames = [
         'Shaded render',
         'Groove spacing',
@@ -68,8 +70,8 @@ EM_JS(void, updateOverlay, (
         '<div class="grid">' +
         '<div><span>Material</span><strong>' + materialName + '</strong></div>' +
         '<div><span>Light</span><strong>' + lightName + '</strong></div>' +
+        '<div><span>Quality</span><strong>' + qualityName + '</strong></div>' +
         '<div><span>Groove</span><strong>' + grooveSpacingNm.toFixed(0) + ' nm</strong></div>' +
-        '<div><span>Layer</span><strong>' + layerThicknessNm.toFixed(0) + ' nm</strong></div>' +
         '</div>' +
         meter('Reflectivity', reflectivity) +
         meter('Roughness', roughness) +
@@ -77,7 +79,7 @@ EM_JS(void, updateOverlay, (
         meter('Thin film', filmStrength) +
         meter('Motion', motionStrength) +
         '<div class="readout">Depth ' + grooveDepthNm.toFixed(1) + ' nm | Disorder ' + disorderStrength.toFixed(2) + ' | Pull ' + interactionStrength.toFixed(2) + ' | Sample #' + spectralIndex + ' ' + spectralWavelengthNm.toFixed(0) + ' nm</div>' +
-        '<div class="help">1 Al, 2 plastic, 3 rainbow sheet, 4 Cu, 5 Au, 6 Ag | L light | F drop/open | Shift+drag pull | D diffraction | R reflection</div>';
+        '<div class="help">1 Al, 2 plastic, 3 rainbow sheet, 4 Cu, 5 Au, 6 Ag | L light | K quality | F reset cloth | Shift+drag pull | D diffraction | R reflection</div>';
 });
 
 GLuint gProgram = 0;
@@ -108,6 +110,7 @@ GLint gEnvironmentHighColorUniform = -1;
 GLint gEnvironmentHorizonColorUniform = -1;
 GLint gEnvironmentSoftboxColorUniform = -1;
 GLint gEnvironmentControlsUniform = -1;
+GLint gQualityControlsUniform = -1;
 GLint gDebugViewUniform = -1;
 GLint gSpectralDebugIndexUniform = -1;
 GLint gSimPositionTexUniform = -1;
@@ -142,13 +145,26 @@ int gDebugView = 0;
 int gSpectralDebugIndex = 0;
 int gLightPresetIndex = 0;
 int gClothReadIndex = 0;
+int gQualityMode = 1;
+int gFrameCounter = 0;
 
 const float kPi = 3.14159265358979323846f;
+
+const char* qualityModeName(int mode) {
+    if (mode == 0) {
+        return "Fast";
+    }
+    if (mode == 2) {
+        return "Quality";
+    }
+    return "Balanced";
+}
 
 void refreshOverlay() {
     updateOverlay(
         materialName(gMaterial.type),
         lightPresetName(gLightPresetIndex),
+        qualityModeName(gQualityMode),
         gDebugView,
         gMaterial.roughness,
         gMaterial.reflectivity,
@@ -345,6 +361,11 @@ void setDebugView(int debugView) {
 void setLightPreset(int presetIndex) {
     gLightPresetIndex = (presetIndex % kLightPresetCount + kLightPresetCount) % kLightPresetCount;
     gLight = createDirectionalLightPreset(gLightPresetIndex);
+    refreshOverlay();
+}
+
+void setQualityMode(int qualityMode) {
+    gQualityMode = (qualityMode % 3 + 3) % 3;
     refreshOverlay();
 }
 
@@ -553,6 +574,11 @@ EM_BOOL onKeyDown(int, const EmscriptenKeyboardEvent* event, void*) {
         return EM_TRUE;
     }
 
+    if (key == 'k' || key == 'K') {
+        setQualityMode(gQualityMode + 1);
+        return EM_TRUE;
+    }
+
     if (key == 'f' || key == 'F') {
         resetClothSimulation();
         refreshOverlay();
@@ -577,7 +603,11 @@ void render() {
             gInteractionStrength = 0.0f;
         }
     }
-    simulateCloth(dt, static_cast<float>(nowSeconds));
+    ++gFrameCounter;
+    const bool skipFastFrame = gQualityMode == 0 && !gSheetPulling && (gFrameCounter % 2) != 0;
+    if (!skipFastFrame) {
+        simulateCloth(gQualityMode == 0 ? dt * 2.0f : dt, static_cast<float>(nowSeconds));
+    }
     glViewport(0, 0, gCanvasWidth, gCanvasHeight);
 
     glClearColor(0.06f, 0.075f, 0.085f, 1.0f);
@@ -600,6 +630,9 @@ void render() {
     glUniform3f(gCameraPositionUniform, cameraPos.x, cameraPos.y, cameraPos.z);
     glUniform1i(gDebugViewUniform, gDebugView);
     glUniform1i(gSpectralDebugIndexUniform, gSpectralDebugIndex);
+    const float maxDiffractionOrder = gQualityMode == 0 ? 1.0f : 2.0f;
+    const float wavelengthStep = gQualityMode == 0 ? 2.0f : 1.0f;
+    glUniform4f(gQualityControlsUniform, maxDiffractionOrder, wavelengthStep, static_cast<float>(gQualityMode), 0.0f);
     uploadDirectionalLight(gLightDirectionUniform, gLight);
     uploadEnvironment(
         gEnvironmentLowColorUniform,
@@ -660,6 +693,7 @@ int main() {
     gEnvironmentHorizonColorUniform = glGetUniformLocation(gProgram, "uEnvHorizonColor");
     gEnvironmentSoftboxColorUniform = glGetUniformLocation(gProgram, "uEnvSoftboxColor");
     gEnvironmentControlsUniform = glGetUniformLocation(gProgram, "uEnvControls");
+    gQualityControlsUniform = glGetUniformLocation(gProgram, "uQualityControls");
     gDebugViewUniform = glGetUniformLocation(gProgram, "uDebugView");
     gSpectralDebugIndexUniform = glGetUniformLocation(gProgram, "uSpectralDebugIndex");
     gSimPositionTexUniform = glGetUniformLocation(gClothSimProgram, "uPositionTex");
