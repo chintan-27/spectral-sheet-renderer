@@ -62,6 +62,7 @@ uniform vec4 uEnvControls;
 uniform vec4 uQualityControls;
 uniform int uDebugView;
 uniform int uSpectralDebugIndex;
+uniform int uPolarizationMode;
 out vec4 FragColor;
 
 vec3 wavelengthToRgb(float wavelengthNm) {
@@ -98,7 +99,7 @@ vec3 wavelengthToRgb(float wavelengthNm) {
     return clamp(vec3(r, g, b) * edge, 0.0, 1.0);
 }
 
-float conductorReflectance(float cosTheta, float eta, float extinction) {
+vec2 conductorReflectanceComponents(float cosTheta, float eta, float extinction) {
     float c = clamp(cosTheta, 0.0, 1.0);
     float eta2 = eta * eta;
     float k2 = extinction * extinction;
@@ -106,7 +107,18 @@ float conductorReflectance(float cosTheta, float eta, float extinction) {
     float c2 = c * c;
     float rs = ((eta2 + k2) - twoEtaC + c2) / ((eta2 + k2) + twoEtaC + c2);
     float rp = ((eta2 + k2) * c2 - twoEtaC + 1.0) / ((eta2 + k2) * c2 + twoEtaC + 1.0);
-    return clamp((rs + rp) * 0.5, 0.0, 1.0);
+    return clamp(vec2(rs, rp), 0.0, 1.0);
+}
+
+float conductorReflectance(float cosTheta, float eta, float extinction) {
+    vec2 components = conductorReflectanceComponents(cosTheta, eta, extinction);
+    if (uPolarizationMode == 1) {
+        return components.x;
+    }
+    if (uPolarizationMode == 2) {
+        return components.y;
+    }
+    return (components.x + components.y) * 0.5;
 }
 
 vec3 spectralMaterialColor(float cosTheta) {

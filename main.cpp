@@ -18,6 +18,7 @@ EM_JS(void, updateOverlay, (
     const char* materialNamePtr,
     const char* lightNamePtr,
     const char* qualityNamePtr,
+    const char* polarizationNamePtr,
     int debugView,
     float roughness,
     float reflectivity,
@@ -40,6 +41,7 @@ EM_JS(void, updateOverlay, (
     const materialName = UTF8ToString(materialNamePtr);
     const lightName = UTF8ToString(lightNamePtr);
     const qualityName = UTF8ToString(qualityNamePtr);
+    const polarizationName = UTF8ToString(polarizationNamePtr);
     const debugNames = [
         'Shaded render',
         'Groove spacing',
@@ -71,6 +73,7 @@ EM_JS(void, updateOverlay, (
         '<div><span>Material</span><strong>' + materialName + '</strong></div>' +
         '<div><span>Light</span><strong>' + lightName + '</strong></div>' +
         '<div><span>Quality</span><strong>' + qualityName + '</strong></div>' +
+        '<div><span>Polarization</span><strong>' + polarizationName + '</strong></div>' +
         '<div><span>Groove</span><strong>' + grooveSpacingNm.toFixed(0) + ' nm</strong></div>' +
         '</div>' +
         meter('Reflectivity', reflectivity) +
@@ -79,7 +82,7 @@ EM_JS(void, updateOverlay, (
         meter('Thin film', filmStrength) +
         meter('Motion', motionStrength) +
         '<div class="readout">Depth ' + grooveDepthNm.toFixed(1) + ' nm | Disorder ' + disorderStrength.toFixed(2) + ' | Pull ' + interactionStrength.toFixed(2) + ' | Sample #' + spectralIndex + ' ' + spectralWavelengthNm.toFixed(0) + ' nm</div>' +
-        '<div class="help">1 Al, 2 plastic, 3 rainbow sheet, 4 Cu, 5 Au, 6 Ag | L light | K quality | F reset cloth | Shift+drag pull | D diffraction | R reflection</div>';
+        '<div class="help">1 Al, 2 plastic, 3 rainbow sheet, 4 Cu, 5 Au, 6 Ag | L light | K quality | Z polarization | F reset cloth | Shift+drag pull</div>';
 });
 
 GLuint gProgram = 0;
@@ -113,6 +116,7 @@ GLint gEnvironmentControlsUniform = -1;
 GLint gQualityControlsUniform = -1;
 GLint gDebugViewUniform = -1;
 GLint gSpectralDebugIndexUniform = -1;
+GLint gPolarizationModeUniform = -1;
 GLint gSimPositionTexUniform = -1;
 GLint gSimVelocityTexUniform = -1;
 GLint gSimResolutionUniform = -1;
@@ -147,6 +151,7 @@ int gLightPresetIndex = 0;
 int gClothReadIndex = 0;
 int gQualityMode = 1;
 int gFrameCounter = 0;
+int gPolarizationMode = 0;
 
 const float kPi = 3.14159265358979323846f;
 
@@ -160,11 +165,22 @@ const char* qualityModeName(int mode) {
     return "Balanced";
 }
 
+const char* polarizationModeName(int mode) {
+    if (mode == 1) {
+        return "S";
+    }
+    if (mode == 2) {
+        return "P";
+    }
+    return "Mixed";
+}
+
 void refreshOverlay() {
     updateOverlay(
         materialName(gMaterial.type),
         lightPresetName(gLightPresetIndex),
         qualityModeName(gQualityMode),
+        polarizationModeName(gPolarizationMode),
         gDebugView,
         gMaterial.roughness,
         gMaterial.reflectivity,
@@ -366,6 +382,11 @@ void setLightPreset(int presetIndex) {
 
 void setQualityMode(int qualityMode) {
     gQualityMode = (qualityMode % 3 + 3) % 3;
+    refreshOverlay();
+}
+
+void setPolarizationMode(int polarizationMode) {
+    gPolarizationMode = (polarizationMode % 3 + 3) % 3;
     refreshOverlay();
 }
 
@@ -579,6 +600,11 @@ EM_BOOL onKeyDown(int, const EmscriptenKeyboardEvent* event, void*) {
         return EM_TRUE;
     }
 
+    if (key == 'z' || key == 'Z') {
+        setPolarizationMode(gPolarizationMode + 1);
+        return EM_TRUE;
+    }
+
     if (key == 'f' || key == 'F') {
         resetClothSimulation();
         refreshOverlay();
@@ -630,6 +656,7 @@ void render() {
     glUniform3f(gCameraPositionUniform, cameraPos.x, cameraPos.y, cameraPos.z);
     glUniform1i(gDebugViewUniform, gDebugView);
     glUniform1i(gSpectralDebugIndexUniform, gSpectralDebugIndex);
+    glUniform1i(gPolarizationModeUniform, gPolarizationMode);
     const float maxDiffractionOrder = gQualityMode == 0 ? 1.0f : 2.0f;
     const float wavelengthStep = gQualityMode == 0 ? 2.0f : 1.0f;
     glUniform4f(gQualityControlsUniform, maxDiffractionOrder, wavelengthStep, static_cast<float>(gQualityMode), 0.0f);
@@ -696,6 +723,7 @@ int main() {
     gQualityControlsUniform = glGetUniformLocation(gProgram, "uQualityControls");
     gDebugViewUniform = glGetUniformLocation(gProgram, "uDebugView");
     gSpectralDebugIndexUniform = glGetUniformLocation(gProgram, "uSpectralDebugIndex");
+    gPolarizationModeUniform = glGetUniformLocation(gProgram, "uPolarizationMode");
     gSimPositionTexUniform = glGetUniformLocation(gClothSimProgram, "uPositionTex");
     gSimVelocityTexUniform = glGetUniformLocation(gClothSimProgram, "uVelocityTex");
     gSimResolutionUniform = glGetUniformLocation(gClothSimProgram, "uResolution");
