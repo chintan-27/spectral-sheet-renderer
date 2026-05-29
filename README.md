@@ -1,6 +1,6 @@
 # Spectral Sheet Renderer
 
-A real-time C++ / WebGL2 renderer for a moving reflective sheet with physically inspired spectral color, diffraction, thin-film interference, roughness, and procedural material structure.
+A real-time C++ / WebGL2 renderer for a GPU-simulated reflective sheet with physically inspired spectral color, diffraction, thin-film interference, roughness, polarization controls, and procedural material structure.
 
 The project renders a shiny rainbow foil-like sheet without external scene assets. Meshes, materials, lighting, procedural environment reflections, wavelength sampling, debug views, and material presets are all generated in code.
 
@@ -23,12 +23,14 @@ For a higher-quality capture, see:
 ## What it does
 
 * Renders a subdivided 3D sheet in WebGL2
-* Animates the sheet with folds, waves, wrinkles, and interactive pulling behavior
+* Simulates the sheet on the GPU with floating-point position and velocity textures
+* Adds gravity, pinned-edge poster behavior, springs, damping, wind, floor collision, and interactive pulling
 * Uses metallic reflection with wavelength-dependent optical constants
 * Computes spectral color from visible wavelength samples
 * Adds diffraction from microscopic groove structure
 * Adds thin-film / layer interference color shifts
-* Blends roughness, disorder, grain direction, and sheet imperfections
+* Keeps ordinary metals visually distinct from the reflective rainbow sheet material
+* Blends roughness, disorder, grain direction, polarization, and sheet imperfections
 * Uses a procedural environment instead of image-based assets
 * Keeps the microscopic model feasible for real-time rendering
 
@@ -51,12 +53,12 @@ Visible color comes from wavelength-dependent reflection, diffraction, and inter
 
 ## Current status
 
-Milestones **1 through 21** are complete.
+Milestones **1 through 25** are complete.
 
 The renderer currently supports:
 
 * WebGL2 rendering through Emscripten
-* A generated deformable sheet mesh
+* A generated sheet mesh driven by GPU cloth state
 * Camera controls
 * Directional lighting
 * Metallic shading
@@ -67,13 +69,15 @@ The renderer currently supports:
 * Groove-direction-based diffraction
 * Thin-film interference
 * Roughness-aware rainbow blur
-* Procedural disorder, wrinkles, folds, and imperfections
-* Interactive sheet shaping / pulling behavior
+* GPU cloth simulation with pinned top edge, springs, gravity, random wind, and collision
+* Interactive sheet pulling behavior
 * Code-defined lighting presets
+* Runtime quality modes
+* Optional mixed / s / p polarization modes
 
 Next planned milestone:
 
-* Milestone 22: expanded debug views for normals, tangents, groove direction, wavelength slices, diffraction orders, roughness, material structure, optical constants, and reflection/rainbow separation.
+* Milestone 26: final polish, documentation cleanup, screenshots, and demo capture refresh.
 
 ## Project layout
 
@@ -86,6 +90,7 @@ Next planned milestone:
 ├── math3d.cpp / math3d.h             # Vector and matrix math
 ├── shaders.cpp / shaders.h           # GLSL shader sources and shader logic
 ├── sheet_mesh.cpp / sheet_mesh.h     # Generated sheet geometry
+├── validation.cpp                     # Native validation checks for optics and cloth math
 ├── main.cpp                          # Application entry point
 ├── index.html                        # Browser page
 ├── index.js                          # Emscripten output glue
@@ -116,6 +121,12 @@ Open:
 
 ```text
 http://localhost:8000
+```
+
+Run the native validation checks:
+
+```bash
+make test
 ```
 
 ## Requirements
@@ -155,8 +166,10 @@ The sheet appearance is built from several layers of behavior:
 ### 1. Geometry
 
 * Generated subdivided sheet mesh
-* Procedural folds, waves, and wrinkles
-* Interactive pulling / hanging-like deformation
+* GPU simulation using ping-ponged position and velocity textures
+* Structural, shear, and bend springs
+* Gravity, damping, wind/randomness, pinned top edge, and floor collision
+* Interactive pulling force from mouse input
 
 ### 2. Lighting
 
@@ -184,6 +197,22 @@ The sheet appearance is built from several layers of behavior:
 * RGB reconstruction from sampled spectrum
 * Diffraction and thin-film effects mixed with reflection
 
+### 6. Runtime controls
+
+* `1` aluminum foil
+* `2` coated plastic
+* `3` reflective rainbow sheet
+* `4` copper
+* `5` gold
+* `6` silver
+* `L` cycle light preset
+* `K` cycle fast / balanced / quality mode
+* `Z` cycle mixed / s / p polarization
+* `F` reset the cloth drop/open simulation
+* `Shift + drag` pull the cloth
+* mouse drag orbit camera
+* scroll zoom
+
 ## Completed milestone summary
 
 * Basic C++ / WebGL2 project setup
@@ -207,24 +236,22 @@ The sheet appearance is built from several layers of behavior:
 * Lattice-inspired procedural disorder
 * Sheet imperfections
 * Improved motion, folds, wrinkles, and interactive shaping
+* Material separation for ordinary metals vs the rainbow sheet target
+* GPU cloth simulation
+* Native validation checks
+* Runtime performance modes
+* Optional polarization controls
 
 ## Roadmap
 
-### Milestone 22: Debug views
+### Milestone 26: Final polish
 
-Add deeper inspection tools for understanding and tuning the renderer:
+Remaining polish items:
 
-* normals
-* tangents
-* groove direction
-* one wavelength at a time
-* one diffraction order at a time
-* roughness
-* material structure parameters
-* `n` / `k` by wavelength
-* layer thickness
-* reflection-only view
-* rainbow-only view
+* refresh README screenshots and video captures from the current GPU cloth renderer
+* add a short note on what is physically approximate
+* keep validation checks expanding as the physics model grows
+* tune the debug views after visual testing
 
 ## Preview assets
 
